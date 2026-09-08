@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+- Redesigned Streamlit as a dark research workspace with responsive summary
+  cards, collapsible advanced controls and Overview/Trades/Compare/Diagnostics.
+- Added automatic first-run results and optional automatic recalculation,
+  filtered trade exports and individual candlestick trade inspection.
+- Added named session snapshots, normalized return overlays and assumption
+  comparisons; pending settings cannot relabel or alter a saved result.
+- Added UI interaction regression coverage for manual/automatic runs, immutable
+  comparisons and empty trade filters. Raised Streamlit minimum to 1.50.
+
 ## 1.3.0 — 2026-09-08
 
 - Added a standalone Python project, run_all.py, editable installation,

@@ -19,7 +19,7 @@ python run_all.py
 The launcher creates a local `.venv`, installs the project, generates a seeded
 120-day synthetic demo, runs the backtest, writes a report bundle under
 `outputs/`, and serves the app at [localhost:8501](http://localhost:8501).
-Open that address and press **Run backtest** in the sidebar. Ctrl+C stops it.
+Open that address; the first result loads automatically. Ctrl+C stops it.
 First setup needs internet; installed demo runs need no market-data connection.
 The launcher works from another working directory when invoked by full path.
 
@@ -35,6 +35,28 @@ The launcher works from another working directory when invoked by full path.
 On macOS/Linux use `.venv/bin/python` for direct commands. No Node.js is needed.
 `--output PATH` selects a **new** result directory. Existing directories are
 refused so an experiment cannot overwrite an earlier result.
+
+## Explore in ORB Lab
+
+The app opens in dark mode, with common controls in the sidebar and advanced
+timing, filters, stop management and contract settings in collapsible panels.
+Change a setup and press **Run backtest**, or enable **Auto-run changes** for
+automatic recalculation. Pending changes are labeled until executed.
+
+- **Overview:** switch the performance chart between balance, percentage return
+  and gross R; drag to zoom and explore monthly and grouped results.
+- **Trades:** filter by side, exit reason and entry date, export the filtered
+  table, then inspect an individual trade on a candlestick chart with range,
+  entry, initial stop, target and exit markers.
+- **Compare:** name and save up to eight runs, then overlay normalized returns
+  by calendar time or closed-trade number and compare their assumptions.
+- **Diagnostics:** inspect opening-range volume, daily flags and exact settings.
+
+Explorer filters leave the full-run metrics unchanged. **Save run** and
+**Export settings** capture the last executed setup. Saved runs stay in the
+current browser session; export the comparison and settings before closing it.
+Preset changes preserve contract, cost and risk inputs, but reset strategy
+filters, management and the end-of-day setting.
 
 ## Dukascopy now
 

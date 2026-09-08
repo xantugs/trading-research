@@ -76,8 +76,11 @@ def test_quality_flags_missing_opening_minute():
 
 def test_launcher_from_another_working_directory(tmp_path):
     env = os.environ.copy()
+    # Keep the running app's demo dataset untouched during the CLI smoke test.
+    bars = tmp_path / "SYNTHETIC_TEST_M1.csv"
+    make_synthetic_m1(days=3, seed=42).to_csv(bars)
     result = subprocess.run([sys.executable, str(ROOT / "run_all.py"), "--no-install", "--no-app",
-                             "--demo-days", "3", "--output", str(tmp_path / "bundle")],
+                             "--source", "csv", "--bars", str(bars), "--output", str(tmp_path / "bundle")],
                             cwd=tmp_path, env=env, text=True, capture_output=True, timeout=60)
     assert result.returncode == 0, result.stdout + result.stderr
     assert (tmp_path / "bundle/report.html").exists()

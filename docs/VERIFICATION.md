@@ -8,7 +8,7 @@ Streamlit 1.63.0, Plotly 6.9.0. The exact installed dependency snapshot is
 
 - `python run_all.py --check --compile-mt5 --no-app` completed its setup,
   compilation, lint, tests, 120-day demo and report pipeline.
-- **70 pytest cases passed**, including the original 17 engine scenarios and
+- **72 pytest cases passed**, including the original 17 engine scenarios and
   new clock, data validation, BI5, cache/retry, strict reconciliation, report,
   app and launcher cases.
 - `python -m ruff check .`: all checks passed.
@@ -17,8 +17,12 @@ Streamlit 1.63.0, Plotly 6.9.0. The exact installed dependency snapshot is
 - MetaEditor **5.0.0.6140**, EA **1.30**: **0 errors, 0 warnings**.
   The local compiler log is `mt5/compile.log`; it is not committed.
 - Browser smoke test: the launcher served the app on localhost, the synthetic
-  dataset loaded, Run backtest produced all six KPI values and rendered the
+  dataset loaded, Run backtest produced the summary metrics and rendered the
   balance chart. The browser values agreed with the command-line bundle.
+- Dark-workspace tests cover automatic reruns, unapplied setting changes,
+  saved result snapshots, comparison clearing and empty explorer filters.
+- Browser review at the in-app panel width confirmed dark controls, readable
+  two-column summary cards, the candlestick inspector and saved-run chart.
 
 Synthetic baseline reproducibility (120 days, seed 42, baseline.json):
 122 trades; 109 traded days; total gross R approximately -6.6670; final
