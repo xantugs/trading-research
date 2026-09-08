@@ -32,6 +32,7 @@ CANDLE = struct.Struct(">5If")
 TICK = struct.Struct(">3I2f")
 SCALES = {"USATECHIDXUSD": 1000, "USA500IDXUSD": 1000, "USA30IDXUSD": 1000,
           "DEUIDXEUR": 1000, "EURUSD": 100000, "GBPUSD": 100000, "USDJPY": 1000}
+FORMAT_VERSION = 1
 
 
 def day_url(symbol: str, day: datetime, name: str) -> str:
@@ -113,7 +114,11 @@ def fetch(url: str, retries: int = 4, cache: Path | None = None) -> bytes | None
                 raise
         except (URLError, TimeoutError, OSError, lzma.LZMAError):
             if attempt == retries - 1:
-                raise
+                raise ConnectionError(
+                    f"Cannot reach Dukascopy at {url}. Cached files are preserved; rerun to resume. "
+                    "If datafeed.dukascopy.com:443 is blocked, try another connection or export M1 CSV "
+                    "from Dukascopy and use run_all.py --source csv --bars FILE."
+                ) from None
         time.sleep(min(2 ** attempt, 8))
     raise RuntimeError("Unreachable retry state")
 
@@ -129,9 +134,39 @@ def write_mt5_format(bars: pd.DataFrame, path: Path) -> None:
     mt5.to_csv(path, sep="\t", index=False, float_format="%.8f")
 
 
+def file_hash(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for block in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def reusable_dataset(out: Path, expected: dict, ticks: bool) -> dict | None:
+    """Return metadata only when every declared local artifact still matches."""
+    metadata_path = out / f"{expected['symbol']}_metadata.json"
+    try:
+        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError):
+        return None
+    if any(metadata.get(key) != value for key, value in expected.items()):
+        return None
+    artifacts = {
+        "m1_sha256": out / f"{expected['symbol']}_M1.csv",
+        "m15_sha256": out / f"{expected['symbol']}_M15.csv",
+        "mt5_sha256": out / f"{expected['symbol']}_M1_mt5.csv",
+    }
+    if ticks:
+        artifacts["ticks_sha256"] = out / f"{expected['symbol']}_ticks.csv"
+    if any(not path.is_file() or metadata.get(key) != file_hash(path) for key, path in artifacts.items()):
+        return None
+    return {**metadata, "reused_local_dataset": True}
+
+
 def download(symbol: str, start: str, end: str, out: Path, *, tz: str = "ny+7",
              scale: float | None = None, point: float = 0.01, spread: float = 1.0,
-             workers: int = 4, cache: Path | None = None, ticks: bool = False) -> dict:
+             workers: int = 4, cache: Path | None = None, ticks: bool = False,
+             reuse: bool = True) -> dict:
     symbol = symbol.upper()
     if not re.fullmatch(r"[A-Z0-9]{3,32}", symbol):
         raise ValueError("symbol must contain only 3-32 letters/digits")
@@ -149,6 +184,15 @@ def download(symbol: str, start: str, end: str, out: Path, *, tz: str = "ny+7",
         raise ValueError("--to must be no later than today UTC; only completed UTC days")
     to_server_time(pd.DatetimeIndex([a]), tz)  # validate before network
     days = [a + timedelta(days=i) for i in range((b - a).days)]
+    expected = {
+        "format_version": FORMAT_VERSION, "provider": "dukascopy", "symbol": symbol,
+        "from_utc": start, "to_utc_exclusive": end, "clock": tz,
+        "price_scale": scale, "point": point, "spread_price_units": spread,
+        "ticks_requested": ticks,
+    }
+    if reuse and (metadata := reusable_dataset(out, expected, ticks)) is not None:
+        print(f"Reusing verified Dukascopy dataset: {out.resolve()}", flush=True)
+        return metadata
     out.mkdir(parents=True, exist_ok=True)
     frames, absent = [], []
     print(f"{symbol}: {len(days)} UTC days [{start}, {end}), clock {tz}", flush=True)
@@ -157,14 +201,20 @@ def download(symbol: str, start: str, end: str, out: Path, *, tz: str = "ny+7",
         raw = fetch(day_url(symbol, day, "BID_candles_min_1.bi5"), cache=cache)
         return day, decode_candles(raw, day, scale)
 
+    completed = 0
     with ThreadPoolExecutor(max_workers=workers) as pool:
-        for i, (day, frame) in enumerate(pool.map(one, days), 1):
-            if frame.empty:
-                absent.append(day.strftime("%Y-%m-%d"))
-            else:
-                frames.append(frame)
-            if i % 20 == 0 or i == len(days):
-                print(f"  {i}/{len(days)} days; {len(absent)} absent/empty", flush=True)
+        # Bound submitted work so a blocked provider stops after at most one worker batch.
+        for offset in range(0, len(days), workers):
+            futures = [pool.submit(one, day) for day in days[offset:offset + workers]]
+            for future in futures:
+                day, frame = future.result()
+                completed += 1
+                if frame.empty:
+                    absent.append(day.strftime("%Y-%m-%d"))
+                else:
+                    frames.append(frame)
+                if completed % 20 == 0 or completed == len(days):
+                    print(f"  {completed}/{len(days)} days; {len(absent)} absent/empty", flush=True)
     if not frames:
         raise ValueError("No data downloaded; check symbol and date range")
     bars = pd.concat(frames).sort_index()
@@ -197,16 +247,22 @@ def download(symbol: str, start: str, end: str, out: Path, *, tz: str = "ny+7",
             raise ValueError("Ticks requested but no ticks returned")
         temp.replace(tick_path)
     metadata = {
-        "provider": "dukascopy", "symbol": symbol, "from_utc": start, "to_utc_exclusive": end,
-        "clock": tz, "price_scale": scale, "point": point, "rows_m1": len(bars),
+        **expected, "rows_m1": len(bars),
         "first_server_time": str(bars.index[0]), "last_server_time": str(bars.index[-1]),
         "absent_utc_days": absent, "spread_model": "constant assumption",
         "spread_price_units": spread, "volume_semantics": "native candle liquidity proxy, not tick count",
         "mt5_import_volume": "synthetic one count per M1; disable volume filters when reconciling",
         "ticks_rows": tick_rows, "downloaded_at_utc": datetime.now(timezone.utc).isoformat(),
-        "m1_sha256": hashlib.sha256(m1_path.read_bytes()).hexdigest(),
+        "m1_sha256": file_hash(m1_path),
+        "m15_sha256": file_hash(out / f"{symbol}_M15.csv"),
+        "mt5_sha256": file_hash(out / f"{symbol}_M1_mt5.csv"),
     }
-    (out / f"{symbol}_metadata.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+    if ticks:
+        metadata["ticks_sha256"] = file_hash(tick_path)
+    metadata_path = out / f"{symbol}_metadata.json"
+    temp_metadata = metadata_path.with_suffix(".json.part")
+    temp_metadata.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+    temp_metadata.replace(metadata_path)
     print(f"Saved {len(bars):,} M1 bars to {m1_path}; first close {bars.close.iloc[0]:.3f}", flush=True)
     return metadata
 
@@ -224,9 +280,12 @@ def main() -> int:
     ap.add_argument("--out", type=Path, default=Path("data"))
     ap.add_argument("--cache", type=Path, default=Path(".cache/dukascopy"))
     ap.add_argument("--ticks", action="store_true")
+    ap.add_argument("--refresh-data", action="store_true")
     args = ap.parse_args()
     try:
-        download(**vars(args))
+        refresh_data = args.refresh_data
+        delattr(args, "refresh_data")
+        download(**vars(args), reuse=not refresh_data)
     except (ValueError, OSError, lzma.LZMAError) as exc:
         print(f"Download failed: {exc}", file=sys.stderr)
         return 1

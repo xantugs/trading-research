@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.3.1 — 2026-09-08
 
 - Redesigned Streamlit as a dark research workspace with responsive summary
   cards, collapsible advanced controls and Overview/Trades/Compare/Diagnostics.
@@ -10,6 +10,11 @@
   comparisons; pending settings cannot relabel or alter a saved result.
 - Added UI interaction regression coverage for manual/automatic runs, immutable
   comparisons and empty trade filters. Raised Streamlit minimum to 1.50.
+- Made `run_all.py --source dukascopy` a complete 2022-to-latest workflow and
+  added a dependency-aware `--data-only` preparation mode.
+- Added verified reuse of completed Dukascopy M1/M15/MT5 datasets, per-artifact
+  hashes and an explicit `--refresh-data` override. Network failures retain the
+  raw cache and include a local CSV fallback command.
 
 ## 1.3.0 — 2026-09-08
 

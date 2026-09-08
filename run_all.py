@@ -2,7 +2,8 @@
 """One command: isolated setup, data, backtest, reports, optional checks and app.
 
 python run_all.py
-python run_all.py --source dukascopy --from 2025-01-01 --to 2025-02-01 --no-app
+python run_all.py --source dukascopy
+python run_all.py --source dukascopy --data-only
 python run_all.py --source csv --bars data/NAS100_M1.csv --no-app
 python run_all.py --check --no-app
 """
@@ -17,6 +18,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
+DEFAULT_DUKASCOPY_START = "2022-01-01"
 
 
 def command(argv, **kwargs):
@@ -39,7 +41,7 @@ def bootstrap(args) -> int | None:
     return subprocess.call([str(python), str(ROOT / "run_all.py"), *sys.argv[1:], "--no-install"], cwd=ROOT)
 
 
-def pipeline(args) -> tuple[Path, Path]:
+def pipeline(args) -> tuple[Path, Path | None]:
     from orb import infer_minutes, load_bars, resample, run_backtest
     from orb.config import load_params
     from orb.reporting import file_hash, quality_report, save_result
@@ -63,7 +65,8 @@ def pipeline(args) -> tuple[Path, Path]:
         folder = ROOT / "data" / f"dukascopy_{args.symbol.upper()}_{args.start}_{args.end}_{args.tz}"
         source.update(download(args.symbol, args.start, args.end, folder, tz=args.tz,
                                scale=args.scale, point=params.point, spread=params.spread,
-                               workers=args.workers, cache=ROOT / ".cache/dukascopy", ticks=args.ticks))
+                               workers=args.workers, cache=ROOT / ".cache/dukascopy", ticks=args.ticks,
+                               reuse=not args.refresh_data))
         data_path = folder / f"{args.symbol.upper()}_M1.csv"
         m1 = load_bars(data_path)
         source["label"] = f"Dukascopy {args.symbol.upper()} [{args.start}, {args.end}) UTC; clock {args.tz}"
@@ -80,6 +83,9 @@ def pipeline(args) -> tuple[Path, Path]:
         raise ValueError("Incomplete/missing opening range on observed days: " +
                          ", ".join(quality["incomplete_or_missing_opening_ranges"][:10]) +
                          ". Check coverage and timezone; use a complete session subset.")
+    if args.data_only:
+        print(f"Data ready: {data_path.resolve()} ({len(m1):,} M1 bars)")
+        return data_path, None
     bars = resample(m1, args.tf)
     result = run_backtest(bars, params, path=m1)
     if result.days.empty:
@@ -96,13 +102,18 @@ def pipeline(args) -> tuple[Path, Path]:
 def parse_args(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--source", choices=["demo", "dukascopy", "csv"], default="demo")
-    ap.add_argument("--from", dest="start")
+    ap.add_argument("--from", dest="start",
+                    help=f"UTC start date; Dukascopy default: {DEFAULT_DUKASCOPY_START}")
     ap.add_argument("--to", dest="end", default=datetime.now(timezone.utc).strftime("%Y-%m-%d"))
     ap.add_argument("--symbol", default="USATECHIDXUSD")
     ap.add_argument("--tz", default="ny+7", help="UTC input -> strategy clock: ny+7, utc, +3")
     ap.add_argument("--scale", type=float)
     ap.add_argument("--workers", type=int, default=4)
     ap.add_argument("--ticks", action="store_true", help="Also archive ticks; engine still uses M1")
+    ap.add_argument("--refresh-data", action="store_true",
+                    help="Rebuild an exact Dukascopy dataset instead of reusing its verified local files")
+    ap.add_argument("--data-only", action="store_true",
+                    help="Install dependencies, prepare and validate data, then stop")
     ap.add_argument("--bars", type=Path)
     ap.add_argument("--config", type=Path, default=ROOT / "configs/baseline.json")
     ap.add_argument("--set", action="append", default=[], metavar="KEY=VALUE")
@@ -124,14 +135,20 @@ def parse_args(argv=None):
         ap.error("--port must be 1-65535")
     if args.ea_log and args.source != "csv":
         ap.error("--ea-log requires --source csv with data from the same MT5 run")
+    if args.ea_log and args.data_only:
+        ap.error("--ea-log cannot be combined with --data-only")
     if args.ticks and args.source != "dukascopy":
         ap.error("--ticks requires --source dukascopy")
+    if args.refresh_data and args.source != "dukascopy":
+        ap.error("--refresh-data requires --source dukascopy")
+    if args.source == "dukascopy" and not args.start:
+        args.start = DEFAULT_DUKASCOPY_START
     return args
 
 
 def main() -> int:
-    if sys.version_info < (3, 11):
-        print("Python 3.11 or newer is required.", file=sys.stderr)
+    if not (3, 11) <= sys.version_info[:2] < (3, 14):
+        print("Python 3.11, 3.12 or 3.13 is required.", file=sys.stderr)
         return 1
     args = parse_args()
     try:
@@ -146,6 +163,8 @@ def main() -> int:
             command([sys.executable, "-m", "ruff", "check", "."])
             command([sys.executable, "-m", "pytest", "-q"])
         data_path, output = pipeline(args)
+        if output is None:
+            return 0
         if args.ea_log:
             from orb.config import load_params
             p = load_params(output / "params.json")

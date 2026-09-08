@@ -78,7 +78,7 @@ def save_result(result: Result, output: Path, source: dict, quality: dict) -> Pa
     source_hashes = {str(p.relative_to(root)): file_hash(p) for p in sorted((root / "orb").glob("*.py"))}
     source_hashes["run_all.py"] = file_hash(root / "run_all.py")
     manifest = {
-        "created_at_utc": datetime.now(timezone.utc).isoformat(), "project_version": "1.3.0",
+        "created_at_utc": datetime.now(timezone.utc).isoformat(), "project_version": "1.3.1",
         "git_revision": revision, "git_dirty": dirty, "source_sha256": source_hashes,
         "python": platform.python_version(), "platform": platform.platform(),
         "packages": {k: importlib.metadata.version(k) for k in ("numpy", "pandas", "plotly", "tzdata")},

@@ -8,7 +8,7 @@ Streamlit 1.63.0, Plotly 6.9.0. The exact installed dependency snapshot is
 
 - `python run_all.py --check --compile-mt5 --no-app` completed its setup,
   compilation, lint, tests, 120-day demo and report pipeline.
-- **72 pytest cases passed**, including the original 17 engine scenarios and
+- **77 pytest cases passed**, including the original 17 engine scenarios and
   new clock, data validation, BI5, cache/retry, strict reconciliation, report,
   app and launcher cases.
 - `python -m ruff check .`: all checks passed.
@@ -31,10 +31,12 @@ performance evidence. Reports are local under `outputs/`.
 
 ## Pending or unavailable
 
-- Dukascopy live-feed verification: a five-day request for
-  [2025-03-07, 2025-03-12) UTC timed out at the public feed host from this
-  machine. A bounded endpoint check also timed out. No real-data result is
-  claimed and no substitute synthetic data was used.
+- Dukascopy live-feed verification: a two-day request for
+  [2025-03-10, 2025-03-12) UTC timed out at the public feed host from this
+  machine. DNS resolved, but TCP/443 failed; HTTPS/HTTP BI5 URLs and the official
+  web export routes all timed out. No real-data result is claimed and no
+  substitute synthetic data was used. Resume and completed-dataset hash checks
+  are verified offline.
 - MT5 visual Strategy Tester smoke test and ten-trade manual review.
 - Real broker EA/Python trade reconciliation.
 - GitHub-hosted Windows/Linux/Python matrix: configured but not yet run on

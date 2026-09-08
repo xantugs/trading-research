@@ -22,6 +22,18 @@ git push -u origin main
 No GitHub repository or remote is created by the project launcher. It never
 pushes, logs into a broker, starts a trading test, or uploads market data.
 
+Run the local release gate before the first push:
+
+```sh
+python run_all.py --reinstall --check --compile-mt5 --no-app
+python -m build
+```
+
+Omit `--compile-mt5` away from a Windows machine with MetaTrader installed.
+The first command refreshes the isolated environment, runs lint and tests, and
+builds a deterministic synthetic report. Market data remains a local runtime
+artifact and is never needed by GitHub Actions.
+
 Before a push, `git status` should show only intentional source changes.
 `data/`, `outputs/`, `.cache/`, `.venv/`, `.streamlit/secrets.toml`,
 .env files and compiled EX5 files are ignored. Source archives are generated

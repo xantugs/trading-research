@@ -84,6 +84,41 @@ def test_download_includes_sunday_and_end_exclusive(tmp_path, monkeypatch):
     assert meta["rows_m1"] == 3
     assert meta["spread_model"] == "constant assumption"
     assert (tmp_path / "USATECHIDXUSD_metadata.json").exists()
+    assert meta["format_version"] == 1
+    assert {"m1_sha256", "m15_sha256", "mt5_sha256"} <= set(meta)
+
+
+def test_exact_download_is_verified_and_reused(tmp_path, monkeypatch):
+    monkeypatch.setattr(duk, "fetch", lambda *args, **kwargs: payload(second=14 * 3600))
+    first = duk.download("USATECHIDXUSD", "2025-03-10", "2025-03-12", tmp_path, workers=1)
+    monkeypatch.setattr(duk, "fetch", lambda *args, **kwargs: pytest.fail("network must not run"))
+    second = duk.download("USATECHIDXUSD", "2025-03-10", "2025-03-12", tmp_path, workers=1)
+    assert first["m1_sha256"] == second["m1_sha256"]
+    assert second["reused_local_dataset"] is True
+
+
+def test_modified_dataset_is_not_reused(tmp_path, monkeypatch):
+    calls = []
+    monkeypatch.setattr(duk, "fetch", lambda *args, **kwargs: payload(second=14 * 3600))
+    duk.download("USATECHIDXUSD", "2025-03-10", "2025-03-12", tmp_path, workers=1)
+    with (tmp_path / "USATECHIDXUSD_M1.csv").open("a", encoding="utf-8") as handle:
+        handle.write("\n")
+    monkeypatch.setattr(duk, "fetch", lambda *args, **kwargs: calls.append(1) or payload(second=14 * 3600))
+    duk.download("USATECHIDXUSD", "2025-03-10", "2025-03-12", tmp_path, workers=1)
+    assert calls
+
+
+def test_failed_download_only_submits_one_worker_batch(tmp_path, monkeypatch):
+    calls = []
+
+    def fail(url, **kwargs):
+        calls.append(url)
+        raise ConnectionError("blocked")
+
+    monkeypatch.setattr(duk, "fetch", fail)
+    with pytest.raises(ConnectionError, match="blocked"):
+        duk.download("USATECHIDXUSD", "2025-03-01", "2025-03-11", tmp_path, workers=2)
+    assert len(calls) == 2
 
 
 @pytest.mark.parametrize("kwargs", [

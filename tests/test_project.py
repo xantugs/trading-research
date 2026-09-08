@@ -12,6 +12,7 @@ from orb.config import load_params
 from orb.reporting import quality_report, save_result
 from orb.synthetic import make_synthetic_m1
 from reconcile import parse_ea_header, tf_minutes
+from run_all import DEFAULT_DUKASCOPY_START, parse_args
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -85,6 +86,26 @@ def test_launcher_from_another_working_directory(tmp_path):
     assert result.returncode == 0, result.stdout + result.stderr
     assert (tmp_path / "bundle/report.html").exists()
     assert (tmp_path / "bundle/trades.csv").exists()
+
+
+def test_dukascopy_one_flag_has_research_defaults():
+    args = parse_args(["--source", "dukascopy"])
+    assert args.start == DEFAULT_DUKASCOPY_START
+    assert args.symbol == "USATECHIDXUSD"
+    assert args.tz == "ny+7"
+    assert args.end
+
+
+def test_data_only_prepares_local_bars_without_report(tmp_path):
+    bars = tmp_path / "LOCAL_M1.csv"
+    make_synthetic_m1(days=3, seed=42).to_csv(bars)
+    result = subprocess.run(
+        [sys.executable, str(ROOT / "run_all.py"), "--no-install", "--data-only",
+         "--source", "csv", "--bars", str(bars)],
+        cwd=tmp_path, text=True, capture_output=True, timeout=60,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "Data ready:" in result.stdout
 
 
 def test_no_signals_not_counted_as_traded():

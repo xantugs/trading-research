@@ -4,7 +4,7 @@ A reproducible Opening Range Breakout research project with a MetaTrader 5 EA,
 a Python bar simulator, Dukascopy and MT5 data tools, trade reconciliation, and
 a Streamlit interface for someone who does not code.
 
-**Project version: 1.3.0.** The EA compiles locally with zero errors and warnings.
+**Project version: 1.3.1.** The EA compiles locally with zero errors and warnings.
 Python scenarios and the app are tested. Broker smoke testing and real-data
 reconciliation are still required. This repository does not establish a trading edge.
 
@@ -29,6 +29,8 @@ The launcher works from another working directory when invoked by full path.
 | Compile the EA too (Windows with MT5 installed) | `python run_all.py --check --compile-mt5 --no-app` |
 | Use an existing Python environment without installs | `python run_all.py --no-install --no-app` |
 | Change settings | `python run_all.py --set tp_ratio=2 --set risk_pct=1 --no-app` |
+| Prepare the full Dukascopy dataset only | `python run_all.py --source dukascopy --data-only` |
+| Prepare Dukascopy data, backtest and open the app | `python run_all.py --source dukascopy` |
 | Run local M1 bars already in the strategy clock | `python run_all.py --source csv --bars data/NAS100_M1.csv --no-app` |
 | Start only the app after setup | `.venv/Scripts/python -m streamlit run app.py` (Windows) |
 
@@ -60,21 +62,26 @@ filters, management and the end-of-day setting.
 
 ## Dukascopy now
 
-Start with one month, then extend the same command:
+The real-data command needs no dates:
 
 ```sh
-python run_all.py --source dukascopy --symbol USATECHIDXUSD --from 2025-01-01 --to 2025-02-01 --no-app
+python run_all.py --source dukascopy
 ```
 
-For a longer research dataset:
+It installs the same isolated dependencies as the demo, downloads
+`USATECHIDXUSD` M1 bid candles from **2022-01-01 through the latest completed
+UTC day**, validates the bars, runs the backtest and opens the app. Use
+`--data-only` to stop once the files are ready. Override the research window
+when a smaller first download is useful:
 
 ```sh
-python run_all.py --source dukascopy --symbol USATECHIDXUSD --from 2022-01-01 --to 2026-09-01 --no-app
+python run_all.py --source dukascopy --from 2025-01-01 --to 2025-02-01 --data-only
 ```
 
-Omit `--no-app` to open the prepared dataset in the app. Downloads use four
-workers, retry transient failures, and cache successful compressed artifacts in
-`.cache/dukascopy/`. Re-running can resume through that cache. No account is needed.
+Downloads use four workers, retry transient failures, and cache successful
+compressed artifacts in `.cache/dukascopy/`. Re-running resumes through that
+cache. A completed dataset is reused only after its M1, M15 and MT5-file hashes
+match the metadata; `--refresh-data` forces a rebuild. No account is needed.
 The source is Dukascopy's **US 100 Tech Index CFD**, not NQ futures or an exchange
 index tape. [Dukascopy instrument list](https://www.dukascopy.com/europe/english/cfd/range-of-markets/).
 
@@ -88,11 +95,14 @@ The downloader writes M1, aggregated M15, an MT5 custom-symbol import file, and
 a metadata JSON. `--ticks` also archives hourly tick files; **the Python engine
 still resolves the path on M1**, so this flag alone does not create a tick backtest.
 
-**Verification status:** five historical days were requested in this session,
-but the Dukascopy host timed out from this machine. Binary decoding, caching,
-retry behavior, end-exclusive dates and DST conversion are covered by offline
-tests. A successful live download remains to be checked; failures never fall
-back to synthetic prices. Keep TLS verification enabled.
+**Verification status:** a two-day real download and direct endpoint checks were
+attempted in this session. DNS resolves, but this network cannot establish a
+TCP/443 connection to Dukascopy's data host; the official web export routes also
+timed out. Binary decoding, cache resume, completed-dataset hash verification,
+end-exclusive dates and DST conversion are covered by offline tests. A successful
+live download remains to be checked. Failures preserve cached BI5 files and never
+fall back to synthetic prices. Try another network, or export M1 CSV from
+Dukascopy and pass it with `--source csv --bars FILE`. Keep TLS verification enabled.
 
 ## Settings and outputs
 
