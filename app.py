@@ -375,10 +375,17 @@ def filtered_trades(trades, directions, reasons, dates):
     return subset
 
 
-def trade_chart(record, trade):
-    start = pd.Timestamp(trade.orb_time) - pd.Timedelta(hours=1)
-    finish = min(pd.Timestamp(trade.exit_time) + pd.Timedelta(hours=1), start + pd.Timedelta(days=3))
-    candles = record["bars"].loc[start:finish]
+def trade_chart(record, trade, context_bars=24):
+    bars = record["bars"]
+    orb_pos = int(bars.index.searchsorted(pd.Timestamp(trade.orb_time)))
+    exit_pos = int(bars.index.searchsorted(pd.Timestamp(trade.exit_time), side="right"))
+    left = max(0, orb_pos - context_bars)
+    right = min(len(bars), exit_pos + context_bars)
+    # Keep very long holds readable while preserving the opening and early path.
+    three_day_right = int(bars.index.searchsorted(bars.index[left] + pd.Timedelta(days=3), side="right"))
+    right = min(right, three_day_right)
+    candles = bars.iloc[left:right]
+    start, finish = candles.index[0], candles.index[-1]
     fig = go.Figure(go.Candlestick(
         x=candles.index, open=candles.open, high=candles.high, low=candles.low, close=candles.close,
         increasing_line_color=TEAL, decreasing_line_color=RED, name=f"M{record['tf']} candles",
@@ -404,8 +411,10 @@ def trade_chart(record, trade):
             fig.add_trace(go.Scatter(x=[when], y=[price], mode="markers", name=label,
                                     marker=dict(symbol=symbol, size=12, color=color),
                                     hovertemplate="%{x}<br>%{y:.2f}<extra>" + label + "</extra>"))
-    style(fig, height=430)
-    fig.update_layout(xaxis_rangeslider_visible=False, hovermode="closest")
+    style(fig, height=620)
+    fig.update_layout(xaxis_rangeslider_visible=False, hovermode="closest", dragmode="zoom",
+                      margin=dict(l=18, r=24, t=28, b=28))
+    fig.update_xaxes(rangeslider_visible=False)
     return fig
 
 
@@ -456,11 +465,19 @@ def trades_view(record):
         st.caption(f"{trade.range_mode} · width {trade.orb_range:,.3f} · "
                    f"bounds {trade.orb_low:,.2f}–{trade.orb_high:,.2f} · "
                    f"Initial risk {trade.risk_dist:,.2f} · {trade.lots:g} lots · Net P/L {trade.profit:+,.2f}")
-        plot(trade_chart(record, trade), "trade_candles_" + record["id"])
+        context = st.select_slider(
+            "Chart context",
+            options=[8, 16, 24, 32, 48], value=24,
+            format_func=lambda n: f"{n} candles before and after",
+            key="trade_context_" + record["id"],
+            help="Adds candles around the opening range and exit without changing the backtest.",
+        )
+        plot(trade_chart(record, trade, context), "trade_candles_" + record["id"])
         anchor_label = "range capture" if record["result"].params.range_mode == "signal_bar" else "box anchor"
         st.caption(f"M{record['tf']} candles · teal band and dashed lines = opening range · "
                    f"shaded candle = {anchor_label}. "
-                   "SL shows the initial level, not later trailing changes. Long holds show the first three days.")
+                   "Each timestamp is the candle's opening time. Drag to zoom; double-click to reset. "
+                   "SL shows the initial level, not later trailing changes.")
 
 
 def comparison_frame(records):

@@ -11,6 +11,8 @@
   regardless of direction, in both Python and the MT5 EA.
 - Added an Algorithm workspace tab with active-rule explanations, MT5 parity
   checks, translated EA inputs, focused/full MQL5 views and source download.
+- Enlarged trade candlestick inspection and added an adjustable before/after
+  candle context so entries can be judged against more surrounding price action.
 - Exposed the new rules in the dark Streamlit workspace and added a documented
   `configs/discussion.json` research starting point.
 - Made the forecast-range multiplier a fine-grained free numeric input and added
