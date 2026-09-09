@@ -14,7 +14,7 @@ Streamlit 1.63.0, Plotly 6.9.0. The exact installed dependency snapshot is
 - `python -m ruff check .`: all checks passed.
 - `python -m pip check`: no broken requirements.
 - `python -m build`: source distribution and engine wheel built.
-- MetaEditor **5.0.0.6140**, EA **1.30**: **0 errors, 0 warnings**.
+- MetaEditor **5.0.0.6140**, EA **1.31**: **0 errors, 0 warnings**.
   The local compiler log is `mt5/compile.log`; it is not committed.
 - Browser smoke test: the launcher served the app on localhost, the synthetic
   dataset loaded, Run backtest produced the summary metrics and rendered the

@@ -40,16 +40,16 @@
 //
 //+------------------------------------------------------------------+
 #property copyright   "echo"
-#property version     "1.30"
+#property version     "1.31"
 #property description "Opening Range Breakout EA - research / backtesting tool."
 #property description "Captures one candle's high/low each day and trades the first"
-#property description "breakout per direction before a cutoff hour."
+#property description "confirmed breakout of the day before a cutoff hour."
 #property description "All times are BROKER SERVER time."
 
 #include <Trade/Trade.mqh>
 
 #define ORB_BOX_PREFIX "ORB_box_"
-#define ORB_VERSION    "1.30"
+#define ORB_VERSION    "1.31"
 
 //+------------------------------------------------------------------+
 //| Enums (the trailing comments are what MetaTrader shows in the    |
@@ -185,8 +185,7 @@ double      g_orbLow       = 0.0;
 datetime    g_orbTime      = 0;
 double      g_orbRangeAtr  = 0.0;
 double      g_orbVolRatio  = 0.0;
-bool        g_longTaken    = false;   // first long breakout of the day already used?
-bool        g_shortTaken   = false;   // first short breakout of the day already used?
+bool        g_tradeTaken   = false;   // has today's one breakout attempt been used?
 bool        g_eodDone      = false;   // end-of-day close finished for today
 string      g_dayStatus    = "";      // shown on the panel while no range is set
 int         g_closedCount  = 0;       // rows written to the log this run
@@ -389,9 +388,9 @@ void OnNewBar()
 
 //--- breakout = previous bar closed inside (or on) the range, last bar closed outside.
 //    Using the previous CLOSE rather than the last bar's OPEN also catches gap breakouts.
-   if(!g_longTaken && DirectionAllowed(1) && prev.close <= g_orbHigh && last.close > g_orbHigh)
+   if(!g_tradeTaken && DirectionAllowed(1) && prev.close <= g_orbHigh && last.close > g_orbHigh)
       HandleSignal(1, last.close);
-   else if(!g_shortTaken && DirectionAllowed(-1) && prev.close >= g_orbLow && last.close < g_orbLow)
+   else if(!g_tradeTaken && DirectionAllowed(-1) && prev.close >= g_orbLow && last.close < g_orbLow)
       HandleSignal(-1, last.close);
   }
 
@@ -400,7 +399,7 @@ void OnNewBar()
 //+------------------------------------------------------------------+
 void CheckImmediateBreakout()
   {
-   if(g_longTaken && g_shortTaken)
+   if(g_tradeTaken)
       return;
    if(!IsBeforeCutoff(TimeCurrent()))
       return;
@@ -408,9 +407,9 @@ void CheckImmediateBreakout()
    const double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
    const double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
 
-   if(!g_longTaken && DirectionAllowed(1) && ask > g_orbHigh)
+   if(!g_tradeTaken && DirectionAllowed(1) && ask > g_orbHigh)
       HandleSignal(1, ask);
-   else if(!g_shortTaken && DirectionAllowed(-1) && bid < g_orbLow)
+   else if(!g_tradeTaken && DirectionAllowed(-1) && bid < g_orbLow)
       HandleSignal(-1, bid);
   }
 
@@ -419,13 +418,9 @@ void CheckImmediateBreakout()
 //+------------------------------------------------------------------+
 void HandleSignal(const int direction, const double refPrice)
   {
-//--- "only the first breakout per direction per day": the flag is set on the
-//    signal itself, so a signal vetoed by the trend filter still uses up that
-//    direction for the day rather than letting a later, weaker breakout in.
-   if(direction > 0)
-      g_longTaken = true;
-   else
-      g_shortTaken = true;
+//--- The first confirmed breakout consumes the whole day's attempt. A signal
+//    vetoed by the trend filter does not let a later, weaker breakout through.
+   g_tradeTaken = true;
 
    if(!TrendAllows(direction, refPrice))
      {
@@ -916,8 +911,7 @@ void ResetOnNewDay(const datetime barTime)
    g_orbTime     = 0;
    g_orbRangeAtr = 0.0;
    g_orbVolRatio = 0.0;
-   g_longTaken   = false;
-   g_shortTaken  = false;
+   g_tradeTaken  = false;
    g_eodDone     = false;
    g_dayStatus   = "";
 
@@ -959,10 +953,10 @@ void UpdatePanel()
    s += StringFormat("Entry: %s  |  TP %.2fR  |  SL %.2f x range  |  risk %.1f%%  |  %s\n",
                      EntryModeText(), InpTpRatio, InpSlRatio, InpRiskPercent, DirectionText());
    if(g_orbSet)
-      s += StringFormat("Today: range %s - %s (%s, %.2f x ATR, volume x%.1f)  |  long: %s  |  short: %s\n",
+      s += StringFormat("Today: range %s - %s (%s, %.2f x ATR, volume x%.1f)  |  trade: %s\n",
                         DoubleToString(g_orbLow, _Digits), DoubleToString(g_orbHigh, _Digits),
                         DoubleToString(g_orbHigh - g_orbLow, _Digits), g_orbRangeAtr, g_orbVolRatio,
-                        g_longTaken ? "taken" : "waiting", g_shortTaken ? "taken" : "waiting");
+                        g_tradeTaken ? "taken" : "waiting");
    else
       s += "Today: " + (g_dayStatus == "" ? "waiting for the range candle" : g_dayStatus) + "\n";
    s += StringFormat("Open positions: %d  |  trades logged this run: %d", CountOurPositions(), g_closedCount);

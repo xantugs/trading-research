@@ -162,7 +162,7 @@ hand-check ten trades. For broker data, install the optional terminal bridge:
 Use the **same instrument, clock, dates and broker data** on both sides.
 Reconciliation matches date/direction, rejects duplicate keys, and checks entry
 minute, entry/SL/TP/exit prices, exit reason and R. `--strict` returns exit code
-2 for mismatches. EA v1.30 headers include ATR, volume, contract and initial
+2 for mismatches. EA v1.30+ headers include ATR, volume, contract and initial
 balance settings; old v1.20 logs may require `--set` overrides. Per-tick
 management should be disabled for the first comparison. Exit time is retained
 for inspection but is not a strict check, because the Python time is a bar open.
@@ -178,14 +178,15 @@ adjusted by current premarket realized volatility. Forecast boxes are centred
 on today's opening price. A close-confirmed breakout can require several
 consecutive closes beyond the box and matching candle colour, then enters at
 the next signal candle's open.
-Immediate mode uses the first M1 crossing. Each direction has one attempt per
-strategy-clock day; a trend veto consumes the attempt.
+Immediate mode uses the first M1 crossing. The first confirmed breakout uses
+the strategy-clock day's only attempt, regardless of direction; a trend veto
+also consumes that attempt.
 
 Stops can use a range multiple or the H/L midpoint. The engine also supports a
 full-window range proportion veto, daily ATR and volume filters, higher-timeframe
 EMA/SMA with a normalized slope veto, EOD close, breakeven and trailing. The new
 strategy switches are currently Python experiments; the EA still follows its
-v1.30 rules. [Exact model and limitations](docs/MODEL.md).
+v1.31 rules. [Exact model and limitations](docs/MODEL.md).
 
 ## Project layout
 

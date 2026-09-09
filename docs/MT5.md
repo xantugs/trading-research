@@ -52,7 +52,7 @@ research and are not currently emitted in MT5's custom-tick import format.
 ## Reconciliation
 
 Use the same M1 source to derive the signal bars for Python. Run
-`reconcile.py --strict` with matching spread settings. New v1.30 log headers
+`reconcile.py --strict` with matching spread settings. New v1.30+ log headers
 carry ATR/volume settings and initial contract/balance information.
 Older logs need explicit overrides for anything absent from the header.
 

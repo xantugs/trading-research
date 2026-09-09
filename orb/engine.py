@@ -9,8 +9,8 @@ The rules are the EA's rules, expressed on bar data:
   (ask for longs = bid + spread, bid for shorts).
 * Immediate entry: the first path bar whose ask trades above the range high
   (or bid below the low) -> entry at max(open ask, high + point).
-* First breakout per direction per day only; a signal vetoed by the trend
-  filter still consumes that direction.
+* First confirmed breakout of the day only, regardless of direction. A signal
+  vetoed by the trend filter still consumes the day.
 * The range can be the observed signal candle or a forecast box centred on the
   session open. Forecasts use the same opening-window range from prior sessions,
   optionally adjusted by today's pre-range realised volatility.
@@ -386,7 +386,7 @@ def run_backtest(bars: pd.DataFrame, params: Params, path: Optional[pd.DataFrame
                 rec["status"] = "skipped: range too large"
                 continue
 
-        long_taken = short_taken = False
+        trade_taken = False
 
         def open_trade(direction: int, entry: float, entry_time: np.datetime64, path_start: int, signal_time: np.datetime64) -> None:
             if path_start >= len(pth.t) or pth.t[path_start] != entry_time:
@@ -447,17 +447,14 @@ def run_backtest(bars: pd.DataFrame, params: Params, path: Optional[pd.DataFrame
                 if p.confirmation_same_color:
                     long_closes &= bool(np.all(sig.c[first:i + 1] > sig.o[first:i + 1]))
                     short_closes &= bool(np.all(sig.c[first:i + 1] < sig.o[first:i + 1]))
-                if (not long_taken and allow_long and before >= 0 and sig.c[before] <= o_h
+                if (not trade_taken and allow_long and before >= 0 and sig.c[before] <= o_h
                         and long_closes):
                     direction = 1
-                elif (not short_taken and allow_short and before >= 0 and sig.c[before] >= o_l
+                elif (not trade_taken and allow_short and before >= 0 and sig.c[before] >= o_l
                       and short_closes):
                     direction = -1
                 if direction != 0:
-                    if direction > 0:
-                        long_taken = True
-                    else:
-                        short_taken = True
+                    trade_taken = True
                     entry_time = sig.t[i + 1]
                     signal_close = sig.c[i]
                     if trend is not None and not trend.allows(direction, signal_close, entry_time):
@@ -467,27 +464,28 @@ def run_backtest(bars: pd.DataFrame, params: Params, path: Optional[pd.DataFrame
                         entry = sig.o[i + 1] + (spread if direction > 0 else 0.0)
                         path_start = int(np.searchsorted(pth.t, entry_time))
                         open_trade(direction, entry, entry_time, path_start, sig.t[i])
+                    break
                 i += 1
         else:
             range_ready = sig.t[orb_i] if p.range_mode != "signal_bar" else sig.t[orb_i] + np.timedelta64(tf, "m")
             j = int(np.searchsorted(pth.t, range_ready))
             while j < len(pth.t) and pth.day[j] == day and pth.hour[j] < p.cutoff_hour:
                 spread = _spread_at(pth, p, index=j)
-                if not long_taken and allow_long and pth.h[j] + spread > o_h:
-                    long_taken = True
+                if not trade_taken and allow_long and pth.h[j] + spread > o_h:
+                    trade_taken = True
                     entry = max(pth.o[j] + spread, o_h + p.point)
                     if trend is not None and not trend.allows(1, entry, pth.t[j]):
                         rec["long"] = "filtered"
                     else:
                         open_trade(1, entry, pth.t[j], j, pth.t[j])
-                if not short_taken and allow_short and pth.l[j] < o_l:
-                    short_taken = True
+                elif not trade_taken and allow_short and pth.l[j] < o_l:
+                    trade_taken = True
                     entry = min(pth.o[j], o_l - p.point)
                     if trend is not None and not trend.allows(-1, entry, pth.t[j]):
                         rec["short"] = "filtered"
                     else:
                         open_trade(-1, entry, pth.t[j], j, pth.t[j])
-                if long_taken and short_taken:
+                if trade_taken:
                     break
                 j += 1
 

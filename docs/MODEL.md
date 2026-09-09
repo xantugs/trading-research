@@ -27,8 +27,9 @@ edge; greater than one extends past it. The old prose describing an additional
 far-side offset was inaccurate. Target distance is entry-to-stop risk times
 tp_ratio. A gap that puts entry beyond stop is skipped.
 
-The signal consumes that day's directional attempt even if the trend filter
-vetoes it. No-signal days are reported separately from traded days.
+The first confirmed signal consumes the day's only attempt, regardless of
+direction, even if the trend filter vetoes it. No-signal days are reported
+separately from traded days.
 Daily state resets at midnight of the configured clock.
 
 ## Indicators and timing

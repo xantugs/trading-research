@@ -7,6 +7,8 @@
   premarket realized volatility. Removed the discarded average-M1 box.
 - Added multi-candle and same-colour breakout confirmation, midpoint stops,
   prior-window range-ratio rejection and a lagged normalized EMA/SMA slope veto.
+- Changed daily trade state to accept only the first confirmed breakout,
+  regardless of direction, in both Python and the MT5 EA.
 - Exposed the new rules in the dark Streamlit workspace and added a documented
   `configs/discussion.json` research starting point.
 - Made the forecast-range multiplier a fine-grained free numeric input and added

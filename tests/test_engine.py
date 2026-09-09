@@ -76,13 +76,12 @@ def test_first_bar_after_orb_can_signal_and_gap_rule():
     assert res.trades.iloc[0]["reason"] == "TP"
 
 
-def test_only_first_breakout_per_direction():
+def test_only_first_breakout_of_day_regardless_of_direction():
     rows = m15_day("2025-05-06", [
         ("16:45", 95, 102, 94, 101),        # long signal
         ("17:00", 101, 101, 85, 92),        # entry 101, stopped at 90 (bar low 85 <= 90), closes back inside
-        ("17:15", 92, 96, 91, 95),          # still inside the range
-        ("17:30", 95, 104, 94, 103),        # second long breakout -> must be ignored
-        ("17:45", 103, 110, 102, 109),
+        ("17:15", 92, 93, 85, 87),          # later short signal must be ignored
+        ("17:30", 87, 88, 60, 65),
     ])
     res = run_backtest(bars(rows), base_params())
     assert len(res.trades) == 1
