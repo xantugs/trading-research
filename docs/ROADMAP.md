@@ -10,7 +10,7 @@
 - EA compiles locally; visual broker smoke test still pending.
 - Live Dukascopy verification pending after the feed timeout on this machine.
 - WRDS TAQ raw extraction and cloud-side M1 aggregation validated on QQQ.
-- Experimental average-M1 range box, multi-candle confirmation, midpoint stop,
+- Experimental historical opening-range forecasts, multi-candle confirmation, midpoint stop,
   prior-range proportion filter and lagged normalized MA slope filter in Python.
 - Python experiment controls are pending MT5 EA parity and broker reconciliation.
 

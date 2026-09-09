@@ -22,7 +22,8 @@ ROOT = Path(__file__).resolve().parents[1]
     {"eod_close": "25:00"}, {"orb_hour": -1}, {"lot_step": 0},
     {"min_lot": 101}, {"spread": -1}, {"filter_ma_method": "wma"}, {"atr_period": "14"},
     {"use_data_spread": "false"}, {"filter_tf_minutes": 0},
-    {"range_avg_multiplier": 0}, {"confirmation_bars": 0},
+    {"range_multiplier": 0}, {"range_history_sessions": 0}, {"range_percentile": 101},
+    {"premarket_window_minutes": 0}, {"premarket_sensitivity": -1}, {"confirmation_bars": 0},
     {"filter_ma_period": 0, "filter_ma_slope_bars": 2, "filter_ma_min_slope_pct": 0.1},
 ])
 def test_parameter_validation(change):

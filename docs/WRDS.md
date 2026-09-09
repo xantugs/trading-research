@@ -84,10 +84,10 @@ Omit `--no-app` to open ORB Lab. `run_all.py` accepts one WRDS M1 file or a
 directory of non-overlapping yearly files. Directory input is combined under
 `data/wrds/prepared/`; overlapping timestamps are rejected.
 
-To test another average-candle width, pass any positive decimal multiplier:
+To test another forecast width, pass any positive decimal multiplier:
 
 ```sh
---set range_avg_multiplier=2.35
+--set range_multiplier=2.35
 ```
 
 Use a fresh `--output` directory for every saved experiment.

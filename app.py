@@ -29,7 +29,8 @@ PRESETS = {
     "Baseline": ({}, "Close confirmation, both directions, 1.5R target. Flat at 22:45."),
     "Tighter stop": ({"sl_ratio": 0.5}, "Stop halfway into the opening range. Keep an eye on stop-outs."),
     "Midpoint stop": ({"stop_mode": "midpoint"}, "Place the initial stop at the centre of the range."),
-    "Average M1 box": ({"range_mode": "avg_m1_box"}, "Range width is an editable multiple of the prior 50 M1 candles."),
+    "Historical range": ({"range_mode": "historical_percentile"}, "Forecast from prior sessions' matching opening ranges."),
+    "Adaptive range": ({"range_mode": "historical_percentile_premarket"}, "Historical opening range adjusted by today's premarket volatility."),
     "2R target": ({"tp_ratio": 2.0}, "A wider target with the same entry and stop rules."),
     "Immediate breakout": ({"entry_mode": "immediate"}, "Enter on the first crossing. M1 cannot reveal exact tick order."),
     "Long + trend": ({"direction": "long", "filter_ma_period": 50}, "Longs above the H1 EMA(50). Includes a history warmup."),
@@ -37,7 +38,8 @@ PRESETS = {
     "Trail the move": ({"tp_ratio": 5.0, "trail_start_r": 1.0}, "Start trailing at 1R, at a distance of 1R."),
 }
 STRATEGY_FIELDS = (
-    "entry_mode", "direction", "range_mode", "range_avg_lookback", "range_avg_multiplier",
+    "entry_mode", "direction", "range_mode", "range_history_sessions", "range_percentile",
+    "range_multiplier", "premarket_window_minutes", "premarket_sensitivity",
     "confirmation_bars", "confirmation_same_color", "tp_ratio", "sl_ratio", "stop_mode", "eod_close",
     "atr_period", "min_range_atr", "max_range_atr", "range_lookback_minutes",
     "max_range_lookback_ratio", "vol_lookback", "vol_spike_min", "filter_ma_period",
@@ -118,7 +120,7 @@ def plot(fig, key):
 
 
 def initialize():
-    if st.session_state.get("workspace_version") == 3:
+    if st.session_state.get("workspace_version") == 4:
         return
     path = os.environ.get("ORB_PARAMS_FILE")
     p = st.session_state.get("cfg") or (load_params(path) if path else load_params(ROOT / "configs/baseline.json"))
@@ -128,7 +130,7 @@ def initialize():
     st.session_state.p_eod_text = p.eod_close or "22:45"
     st.session_state.signal_tf = int(os.environ.get("ORB_SIGNAL_TF", "15"))
     st.session_state.experiments = []
-    st.session_state.workspace_version = 3
+    st.session_state.workspace_version = 4
 
 
 def apply_preset():
@@ -141,10 +143,12 @@ def apply_preset():
     st.session_state.p_eod_text = changed.eod_close or "22:45"
 
 
-def number(label, field, minimum=0.0, step=0.1, fmt=None, help=None):
+def number(label, field, minimum=0.0, maximum=None, step=0.1, fmt=None, help=None):
     value = st.session_state[f"p_{field}"]
     # Preserve valid configurations loaded by the launcher even beyond UI presets.
     kwargs = dict(min_value=minimum, step=step, key=f"p_{field}", help=help)
+    if maximum is not None:
+        kwargs["max_value"] = maximum
     if isinstance(value, int):
         kwargs["min_value"], kwargs["step"] = int(minimum), max(1, int(step))
     if fmt:
@@ -207,19 +211,34 @@ def sidebar():
             with b:
                 st.number_input("Range minute", 0, 59, key="p_orb_minute")
             st.number_input("Entry cutoff hour", 1, 23, key="p_cutoff_hour")
-            st.selectbox("Range construction", ["signal_bar", "avg_m1_box"], key="p_range_mode",
-                         format_func=lambda v: "Signal candle high–low" if v == "signal_bar"
-                         else "Average M1 range box")
-            a, b = st.columns(2)
-            with a:
-                number("M1 candles", "range_avg_lookback", minimum=1, step=1,
-                       help="Completed one-minute candles before the range starts.")
-            with b:
-                number("Box width · × average", "range_avg_multiplier", minimum=0.01, step=0.05, fmt="%.2f",
+            range_labels = {
+                "signal_bar": "Observed opening candle",
+                "historical_percentile": "Historical opening-range percentile",
+                "historical_percentile_premarket": "Historical percentile + premarket volatility",
+            }
+            st.selectbox("Range construction", list(range_labels), key="p_range_mode",
+                         format_func=range_labels.get)
+            forecast = st.session_state.p_range_mode != "signal_bar"
+            if forecast:
+                a, b = st.columns(2)
+                with a:
+                    number("Prior sessions", "range_history_sessions", minimum=1, step=1,
+                           help="Uses only earlier sessions at the same opening-window time.")
+                with b:
+                    number("Historical percentile", "range_percentile", minimum=0.1, maximum=100.0,
+                           step=1.0, fmt="%.1f")
+                number("Box width multiplier", "range_multiplier", minimum=0.01, step=0.05, fmt="%.2f",
                        help="Type any positive decimal multiplier.")
-            st.caption("Enter any positive decimal multiplier for the total box width.")
+            if st.session_state.p_range_mode == "historical_percentile_premarket":
+                a, b = st.columns(2)
+                with a:
+                    number("Premarket window · min", "premarket_window_minutes", minimum=1, step=15)
+                with b:
+                    number("Adjustment sensitivity", "premarket_sensitivity", minimum=0.0, step=0.1, fmt="%.2f")
             if st.session_state.p_range_mode == "signal_bar":
-                st.caption("M1 box settings apply only to Average M1 range box.")
+                st.caption("Uses the completed candle at the selected range time; trading starts after it closes.")
+            else:
+                st.caption("Forecasts a box around today's opening price using prior sessions only; trading can start immediately.")
             st.checkbox("Flat at end of session", key="p_eod_on")
             st.text_input("Close time · HH:MM", key="p_eod_text", disabled=not st.session_state.p_eod_on)
             st.caption("These are dataset-clock times. ny+7 maps 09:30 New York to 16:30 year-round.")

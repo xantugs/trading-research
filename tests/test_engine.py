@@ -330,41 +330,55 @@ def test_confirmation_rejects_breakout_that_reverses_inside():
     assert result.trades.empty
 
 
-def test_average_m1_box_has_requested_total_width():
-    index = pd.date_range("2025-05-06 15:40", "2025-05-06 17:14", freq="min")
-    m1 = pd.DataFrame({"open": 100.0, "high": 101.0, "low": 99.0, "close": 100.0,
-                       "tick_volume": 100.0, "spread": 0.0}, index=index)
-    m1.loc["2025-05-06 16:30":"2025-05-06 16:44", ["open", "high", "low", "close"]] = [
-        100.0, 102.0, 99.5, 101.5]
-    m1.loc["2025-05-06 16:45":, ["open", "high", "low", "close"]] = [101.5, 110.0, 101.0, 108.0]
-    signal = resample(m1, 15)
-    result = run_backtest(
-        signal,
-        base_params(range_mode="avg_m1_box", range_avg_lookback=50,
-                    range_avg_multiplier=1.0),
-        path=m1,
+def forecast_history_rows():
+    return (
+        m15_day("2025-05-05", [], orb=("16:30", 100, 105, 95, 100))
+        + m15_day("2025-05-06", [], orb=("16:30", 100, 110, 90, 100))
+        + m15_day("2025-05-07", [], orb=("16:30", 200, 230, 170, 200))
     )
-    trade = result.trades.iloc[0]
-    assert trade.orb_low == pytest.approx(99.0)
-    assert trade.orb_high == pytest.approx(101.0)
-    assert trade.orb_range == pytest.approx(2.0)
-    assert trade.entry_time == pd.Timestamp("2025-05-06 16:45")
 
 
-@pytest.mark.parametrize("multiplier, expected_width", [(0.37, 0.74), (2.25, 4.5), (11.8, 23.6)])
-def test_average_m1_box_multiplier_is_total_width(multiplier, expected_width):
-    index = pd.date_range("2025-05-06 15:40", "2025-05-06 17:14", freq="min")
-    m1 = pd.DataFrame({"open": 100.0, "high": 101.0, "low": 99.0, "close": 100.0,
-                       "tick_volume": 100.0, "spread": 0.0}, index=index)
-    signal = resample(m1, 15)
+def test_historical_percentile_normalizes_prior_opening_ranges():
     result = run_backtest(
-        signal,
-        base_params(range_mode="avg_m1_box", range_avg_lookback=50,
-                    range_avg_multiplier=multiplier),
-        path=m1,
+        bars(forecast_history_rows()),
+        base_params(range_mode="historical_percentile", range_history_sessions=2,
+                    range_percentile=50, range_multiplier=1.0),
     )
-    day = result.days.iloc[0]
-    assert day.orb_range == pytest.approx(expected_width)
+    day = result.days.iloc[-1]
+    assert day.orb_range == pytest.approx(30.0)  # median of 10% and 20%, applied to today's 200 open
+    assert day.orb_low == pytest.approx(185.0)
+    assert day.orb_high == pytest.approx(215.0)
+    assert result.days.iloc[0].status == "skipped: insufficient session history"
+
+
+@pytest.mark.parametrize("multiplier, expected_width", [(0.37, 11.1), (2.25, 67.5), (11.8, 354.0)])
+def test_historical_range_multiplier_accepts_any_positive_decimal(multiplier, expected_width):
+    result = run_backtest(
+        bars(forecast_history_rows()),
+        base_params(range_mode="historical_percentile", range_history_sessions=2,
+                    range_percentile=50, range_multiplier=multiplier),
+    )
+    assert result.days.iloc[-1].orb_range == pytest.approx(expected_width)
+
+
+def test_premarket_adjustment_expands_width_when_current_volatility_is_higher():
+    rows = []
+    for day in ("2025-05-05", "2025-05-06"):
+        rows += [(f"{day} 16:00", 100, 101, 99, 101),
+                 (f"{day} 16:15", 101, 102, 99, 100),
+                 (f"{day} 16:30", 100, 105, 95, 100)]
+    rows += [("2025-05-07 16:00", 100, 105, 99, 104),
+             ("2025-05-07 16:15", 104, 105, 99, 100),
+             ("2025-05-07 16:30", 100, 105, 95, 100)]
+    frame = bars(rows)
+    plain = run_backtest(frame, base_params(
+        range_mode="historical_percentile", range_history_sessions=2,
+        range_percentile=50, premarket_window_minutes=30))
+    adaptive = run_backtest(frame, base_params(
+        range_mode="historical_percentile_premarket", range_history_sessions=2,
+        range_percentile=50, premarket_window_minutes=30, premarket_sensitivity=0.5))
+    assert plain.days.iloc[-1].orb_range == pytest.approx(10.0)
+    assert adaptive.days.iloc[-1].orb_range > plain.days.iloc[-1].orb_range
 
 
 def test_flat_completed_ema_rejects_breakout_when_slope_filter_is_on():

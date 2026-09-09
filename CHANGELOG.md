@@ -2,12 +2,14 @@
 
 ## 1.4.0 — 2026-09-09
 
-- Added Python experiment switches for average-M1 range boxes, multi-candle and
-  same-colour breakout confirmation, midpoint stops, prior-window range-ratio
-  rejection and a lagged normalized EMA/SMA slope veto.
+- Added three focused Python range choices: the observed opening candle, a
+  prior-session opening-range percentile, and the same forecast adjusted by
+  premarket realized volatility. Removed the discarded average-M1 box.
+- Added multi-candle and same-colour breakout confirmation, midpoint stops,
+  prior-window range-ratio rejection and a lagged normalized EMA/SMA slope veto.
 - Exposed the new rules in the dark Streamlit workspace and added a documented
   `configs/discussion.json` research starting point.
-- Made the average-range multiplier a fine-grained free numeric input and added
+- Made the forecast-range multiplier a fine-grained free numeric input and added
   labeled range bounds, construction and width to trade inspection.
 - Added WRDS NYSE TAQ daily raw extraction, cloud-side QQQ M1 aggregation,
   legacy-schema detection, SGE yearly jobs and durable progress bars.

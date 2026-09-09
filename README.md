@@ -114,11 +114,12 @@ Edit [configs/baseline.json](configs/baseline.json), pass `--config FILE`, or us
 repeated `--set key=value` arguments. Booleans are `true/false`; an optional
 close time can be disabled with `--set eod_close=null`.
 
-`configs/discussion.json` captures the current research hypothesis: a 50-M1
-average range box, three same-colour confirmation candles, midpoint stop,
-one-quarter/two-hour range veto and a lagged H1 EMA slope threshold. Treat every
-number as a test parameter. The range multiplier accepts any positive decimal;
-compare chosen values in separately saved runs.
+`configs/discussion.json` captures the current research hypothesis: the median
+normalized opening range from the prior 20 sessions, three same-colour
+confirmation candles, midpoint stop, one-quarter/two-hour range veto and a
+lagged H1 EMA slope threshold. Treat every number as a test parameter. The
+range multiplier accepts any positive decimal; compare chosen values in
+separately saved runs.
 
 The supplied research config uses 16:30 / 19:00, 1.5R target, range-multiple stop,
 2% equity sizing, a **1.0 price-unit constant spread assumption**, and EOD at
@@ -171,11 +172,12 @@ For an integrated local-data run add `--ea-log PATH` to
 
 ## What the engine implements
 
-The default opening range is one completed signal candle. Experimental Python
-mode can instead centre a box on the session open with total width equal to a
-multiple of the average range of the prior 50 M1 candles. A close-confirmed
-breakout can require several consecutive closes beyond the box and matching
-candle colour, then enters at the next signal candle's open.
+The range can be the completed opening candle, a forecast based on a percentile
+of prior sessions' matching normalized opening ranges, or that same forecast
+adjusted by current premarket realized volatility. Forecast boxes are centred
+on today's opening price. A close-confirmed breakout can require several
+consecutive closes beyond the box and matching candle colour, then enters at
+the next signal candle's open.
 Immediate mode uses the first M1 crossing. Each direction has one attempt per
 strategy-clock day; a trend veto consumes the attempt.
 

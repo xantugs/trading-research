@@ -2,18 +2,23 @@
 
 ## Signal and stop rules
 
-The default range uses one complete opening candle per strategy-clock date for
-high H, low L and width W. Experimental `avg_m1_box` mode instead averages the
-high-low width of the prior N completed M1 candles, multiplies it by a selected
-positive factor, and centres that total width on the session-open price. The
-factor is free input rather than a fixed set of choices.
+The engine has three range constructions. `signal_bar` waits for the selected
+opening candle to complete and uses its high H, low L and width W.
+`historical_percentile` takes the selected percentile of the same opening
+candle's normalized high-low range over the prior N sessions, applies an
+editable positive multiplier, and centres that forecast width on today's open.
+`historical_percentile_premarket` additionally scales the width by today's
+pre-range realized volatility relative to the median of those prior sessions.
+Both forecasts use only information available before today's opening candle.
 
 Close mode can require N consecutive signal candles beyond the range. An
 optional colour rule also requires green candles for a long or red candles for
 a short. The close immediately before the sequence must be inside the range,
 so a breakout that reverses inside before completing confirmation is rejected.
-Entry is the next signal bar's open, before cutoff. Immediate mode checks M1
-highs/lows and does not use multi-candle confirmation.
+Entry is the next signal bar's open, before cutoff. Immediate mode checks
+path-bar highs/lows and does not use multi-candle confirmation. A forecast range
+can trade from the selected opening time; the observed range cannot trade until
+its candle has completed.
 
 The default long stop is H - W * sl_ratio and the default short stop is
 L + W * sl_ratio. Midpoint mode places either initial stop at (H + L) / 2.

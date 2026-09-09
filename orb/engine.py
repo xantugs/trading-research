@@ -11,8 +11,9 @@ The rules are the EA's rules, expressed on bar data:
   (or bid below the low) -> entry at max(open ask, high + point).
 * First breakout per direction per day only; a signal vetoed by the trend
   filter still consumes that direction.
-* The range can be the signal candle or a box centred on the session open whose
-  width is a multiple of the average of recent M1 candle ranges.
+* The range can be the observed signal candle or a forecast box centred on the
+  session open. Forecasts use the same opening-window range from prior sessions,
+  optionally adjusted by today's pre-range realised volatility.
 * Close confirmation can require several consecutive closes beyond the range,
   optionally with candle colour matching the breakout direction.
 * Stop = range midpoint or far side +/- range x sl_ratio; target = risk x tp_ratio.
@@ -51,9 +52,12 @@ class Params:
     # strategy
     entry_mode: str = "close"          # "close" | "immediate"
     direction: str = "both"            # "both" | "long" | "short"
-    range_mode: str = "signal_bar"      # "signal_bar" | "avg_m1_box"
-    range_avg_lookback: int = 50
-    range_avg_multiplier: float = 1.0
+    range_mode: str = "signal_bar"      # signal_bar | historical_percentile | historical_percentile_premarket
+    range_history_sessions: int = 20
+    range_percentile: float = 50.0
+    range_multiplier: float = 1.0
+    premarket_window_minutes: int = 120
+    premarket_sensitivity: float = 0.5
     confirmation_bars: int = 1
     confirmation_same_color: bool = False
     tp_ratio: float = 1.5
@@ -136,8 +140,9 @@ class Params:
             raise ValueError("eod_close must not be earlier than the cutoff hour")
         if self.entry_mode not in ("close", "immediate"):
             raise ValueError("entry_mode must be 'close' or 'immediate'")
-        if self.range_mode not in ("signal_bar", "avg_m1_box"):
-            raise ValueError("range_mode must be 'signal_bar' or 'avg_m1_box'")
+        range_modes = ("signal_bar", "historical_percentile", "historical_percentile_premarket")
+        if self.range_mode not in range_modes:
+            raise ValueError(f"range_mode must be one of {range_modes}")
         if self.stop_mode not in ("range_multiple", "midpoint"):
             raise ValueError("stop_mode must be 'range_multiple' or 'midpoint'")
         if self.direction not in ("both", "long", "short"):
@@ -150,10 +155,16 @@ class Params:
             raise ValueError("Invalid filter_ma_method")
         if self.confirmation_bars < 1:
             raise ValueError("confirmation_bars must be positive")
-        if self.range_avg_lookback < 1:
-            raise ValueError("range_avg_lookback must be positive")
-        if self.range_avg_multiplier <= 0:
-            raise ValueError("range_avg_multiplier must be positive")
+        if self.range_history_sessions < 1:
+            raise ValueError("range_history_sessions must be positive")
+        if not 0 < self.range_percentile <= 100:
+            raise ValueError("range_percentile must be in (0, 100]")
+        if self.range_multiplier <= 0:
+            raise ValueError("range_multiplier must be positive")
+        if self.premarket_window_minutes < 1:
+            raise ValueError("premarket_window_minutes must be positive")
+        if self.premarket_sensitivity < 0:
+            raise ValueError("premarket_sensitivity must be nonnegative")
         if self.range_lookback_minutes < 1:
             raise ValueError("range_lookback_minutes must be positive")
         if self.filter_ma_min_slope_pct > 0 and self.filter_ma_slope_bars < 1:
@@ -259,37 +270,61 @@ def run_backtest(bars: pd.DataFrame, params: Params, path: Optional[pd.DataFrame
     trend = _TrendFilter(bars, p) if p.filter_ma_period > 0 else None
 
     path_minutes = infer_minutes(path)
-    if p.range_mode == "avg_m1_box" and path_minutes != 1:
-        raise ValueError("avg_m1_box requires an M1 path")
 
     # opening-range candle of each day
     orb_mask = (sig.hour == p.orb_hour) & (sig.minute == p.orb_minute)
     orb_indices = np.flatnonzero(orb_mask)
+    observed_widths = np.array([
+        (sig.h[i] - sig.l[i]) / sig.o[i] if sig.o[i] > 0 else np.nan
+        for i in orb_indices
+    ])
+    premarket_sigmas = (np.array([
+        _realized_sigma(path, pd.Timestamp(sig.t[i]), p.premarket_window_minutes, path_minutes)
+        for i in orb_indices
+    ]) if p.range_mode == "historical_percentile_premarket" else np.full(len(orb_indices), np.nan))
 
     trades: list[dict] = []
     days: list[dict] = []
 
-    for orb_i in orb_indices:
+    for session_i, orb_i in enumerate(orb_indices):
         day = sig.day[orb_i]
         orb_time = pd.Timestamp(sig.t[orb_i])
         prior_path = path.loc[path.index < orb_time]
-        range_note = "signal bar"
-        if p.range_mode == "avg_m1_box":
-            previous = prior_path.tail(p.range_avg_lookback)
-            if len(previous) < p.range_avg_lookback:
+        range_note = "Observed opening range"
+        if p.range_mode != "signal_bar":
+            start = session_i - p.range_history_sessions
+            previous = observed_widths[max(0, start):session_i]
+            if len(previous) < p.range_history_sessions or not np.isfinite(previous).all():
                 days.append({
                     "date": orb_time.date(), "orb_time": orb_time,
                     "orb_high": np.nan, "orb_low": np.nan, "orb_range": np.nan,
-                    "range_mode": f"M1 average x {p.range_avg_multiplier:g}",
+                    "range_mode": "Historical opening-range percentile",
                     "range_lookback_ratio": np.nan, "range_atr": 0.0, "vol_ratio": 0.0,
-                    "status": "skipped: insufficient M1 range history", "long": "", "short": "",
+                    "status": "skipped: insufficient session history", "long": "", "short": "",
                 })
                 continue
-            average_m1 = float((previous.high - previous.low).mean())
-            width = average_m1 * p.range_avg_multiplier
+            width_pct = float(np.percentile(previous, p.range_percentile))
+            adjustment = 1.0
+            if p.range_mode == "historical_percentile_premarket":
+                prior_sigma = premarket_sigmas[start:session_i]
+                today_sigma = premarket_sigmas[session_i]
+                reference_sigma = float(np.median(prior_sigma)) if np.isfinite(prior_sigma).all() else np.nan
+                if not np.isfinite(today_sigma) or not np.isfinite(reference_sigma) or reference_sigma <= 0:
+                    days.append({
+                        "date": orb_time.date(), "orb_time": orb_time,
+                        "orb_high": np.nan, "orb_low": np.nan, "orb_range": np.nan,
+                        "range_mode": "Historical percentile + premarket volatility",
+                        "range_lookback_ratio": np.nan, "range_atr": 0.0, "vol_ratio": 0.0,
+                        "status": "skipped: insufficient premarket history", "long": "", "short": "",
+                    })
+                    continue
+                adjustment = (today_sigma / reference_sigma) ** p.premarket_sensitivity
             anchor = float(sig.o[orb_i])
+            width = anchor * width_pct * p.range_multiplier * adjustment
             o_h, o_l = anchor + width / 2, anchor - width / 2
-            range_note = f"M1 average x {p.range_avg_multiplier:g}"
+            range_note = f"Historical P{p.range_percentile:g} x {p.range_multiplier:g}"
+            if p.range_mode == "historical_percentile_premarket":
+                range_note += f" x premarket {adjustment:.2f}"
         else:
             o_h, o_l = sig.h[orb_i], sig.l[orb_i]
         rng = o_h - o_l
@@ -397,7 +432,7 @@ def run_backtest(bars: pd.DataFrame, params: Params, path: Optional[pd.DataFrame
             rec["status"] = "traded"
 
         if p.entry_mode == "close":
-            i = orb_i if p.range_mode == "avg_m1_box" else orb_i + 1
+            i = orb_i if p.range_mode != "signal_bar" else orb_i + 1
             while i + 1 < n_sig and sig.day[i + 1] == day:
                 if sig.hour[i + 1] >= p.cutoff_hour:       # the entry bar would be at/after the cutoff
                     break
@@ -434,8 +469,8 @@ def run_backtest(bars: pd.DataFrame, params: Params, path: Optional[pd.DataFrame
                         open_trade(direction, entry, entry_time, path_start, sig.t[i])
                 i += 1
         else:
-            orb_end = sig.t[orb_i] + np.timedelta64(tf, "m")
-            j = int(np.searchsorted(pth.t, orb_end))
+            range_ready = sig.t[orb_i] if p.range_mode != "signal_bar" else sig.t[orb_i] + np.timedelta64(tf, "m")
+            j = int(np.searchsorted(pth.t, range_ready))
             while j < len(pth.t) and pth.day[j] == day and pth.hour[j] < p.cutoff_hour:
                 spread = _spread_at(pth, p, index=j)
                 if not long_taken and allow_long and pth.h[j] + spread > o_h:
@@ -485,6 +520,21 @@ class _Arrays:
         self.c = df["close"].values.astype(float)
         self.v = df["tick_volume"].values.astype(float) if "tick_volume" in df else np.zeros(len(df))
         self.spread = df["spread"].values.astype(float) if "spread" in df else np.zeros(len(df))
+
+
+def _realized_sigma(path: pd.DataFrame, end: pd.Timestamp, minutes: int, bar_minutes: int) -> float:
+    """Realised log-return volatility in the complete window ending at ``end``."""
+    start = end - pd.Timedelta(minutes=minutes)
+    window = path.loc[(path.index >= start) & (path.index < end)]
+    if (window.empty
+            or window.index[0] > start + pd.Timedelta(minutes=bar_minutes)
+            or window.index[-1] < end - pd.Timedelta(minutes=bar_minutes)):
+        return np.nan
+    prices = np.r_[float(window.open.iloc[0]), window.close.to_numpy(dtype=float)]
+    if np.any(prices <= 0):
+        return np.nan
+    returns = np.diff(np.log(prices))
+    return float(np.sqrt(np.sum(returns * returns)))
 
 
 def _spread_at(pth: _Arrays, p: Params, when: Optional[np.datetime64] = None, index: Optional[int] = None) -> float:
