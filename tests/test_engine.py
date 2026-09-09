@@ -266,6 +266,125 @@ def test_trend_filter_vetoes_and_consumes_direction():
     assert d.loc[pd.Timestamp("2025-05-06").date(), "long"] == "filtered"
 
 
+def test_midpoint_stop_mode():
+    rows = m15_day("2025-05-06", [
+        ("16:45", 95, 102, 94, 101),
+        ("17:00", 101, 120, 100, 118),
+    ])
+    result = run_backtest(bars(rows), base_params(stop_mode="midpoint"))
+    trade = result.trades.iloc[0]
+    assert trade.sl == pytest.approx(95.0)
+    assert trade.risk_dist == pytest.approx(6.0)
+
+
+def test_range_vs_prior_window_filter():
+    history = []
+    for timestamp in pd.date_range("2025-05-06 14:30", "2025-05-06 15:45", freq="15min"):
+        history.append((timestamp, 95, 96, 94, 95))
+    rows = m15_day("2025-05-06", [
+        ("16:45", 95, 102, 94, 101),
+        ("17:00", 101, 120, 100, 118),
+    ])
+    result = run_backtest(
+        bars(history + rows),
+        base_params(range_lookback_minutes=120, max_range_lookback_ratio=0.25),
+    )
+    assert result.trades.empty
+    assert result.days.iloc[0].status == "skipped: range too large vs lookback"
+    assert result.days.iloc[0].range_lookback_ratio == pytest.approx(5.0)
+
+
+def test_range_lookback_filter_rejects_incomplete_history():
+    result = run_backtest(
+        bars(m15_day("2025-05-06", [("16:45", 95, 102, 94, 101),
+                                     ("17:00", 101, 120, 100, 118)])),
+        base_params(range_lookback_minutes=120, max_range_lookback_ratio=0.25),
+    )
+    assert result.trades.empty
+    assert result.days.iloc[0].status == "skipped: insufficient range lookback history"
+
+
+def test_three_same_color_closes_confirm_breakout():
+    rows = m15_day("2025-05-06", [
+        ("16:45", 99, 101.5, 98, 101),
+        ("17:00", 101, 102.5, 100.5, 102),
+        ("17:15", 102, 103.5, 101.5, 103),
+        ("17:30", 103, 120, 102, 118),
+    ])
+    result = run_backtest(
+        bars(rows),
+        base_params(confirmation_bars=3, confirmation_same_color=True),
+    )
+    assert len(result.trades) == 1
+    assert result.trades.iloc[0].signal_time == pd.Timestamp("2025-05-06 17:15")
+    assert result.trades.iloc[0].entry_time == pd.Timestamp("2025-05-06 17:30")
+
+
+def test_confirmation_rejects_breakout_that_reverses_inside():
+    rows = m15_day("2025-05-06", [
+        ("16:45", 99, 102, 98, 101),
+        ("17:00", 101, 102, 94, 96),
+        ("17:15", 96, 99, 94, 97),
+    ])
+    result = run_backtest(bars(rows), base_params(confirmation_bars=2))
+    assert result.trades.empty
+
+
+def test_average_m1_box_has_requested_total_width():
+    index = pd.date_range("2025-05-06 15:40", "2025-05-06 17:14", freq="min")
+    m1 = pd.DataFrame({"open": 100.0, "high": 101.0, "low": 99.0, "close": 100.0,
+                       "tick_volume": 100.0, "spread": 0.0}, index=index)
+    m1.loc["2025-05-06 16:30":"2025-05-06 16:44", ["open", "high", "low", "close"]] = [
+        100.0, 102.0, 99.5, 101.5]
+    m1.loc["2025-05-06 16:45":, ["open", "high", "low", "close"]] = [101.5, 110.0, 101.0, 108.0]
+    signal = resample(m1, 15)
+    result = run_backtest(
+        signal,
+        base_params(range_mode="avg_m1_box", range_avg_lookback=50,
+                    range_avg_multiplier=1.0),
+        path=m1,
+    )
+    trade = result.trades.iloc[0]
+    assert trade.orb_low == pytest.approx(99.0)
+    assert trade.orb_high == pytest.approx(101.0)
+    assert trade.orb_range == pytest.approx(2.0)
+    assert trade.entry_time == pd.Timestamp("2025-05-06 16:45")
+
+
+@pytest.mark.parametrize("multiplier, expected_width", [(0.37, 0.74), (2.25, 4.5), (11.8, 23.6)])
+def test_average_m1_box_multiplier_is_total_width(multiplier, expected_width):
+    index = pd.date_range("2025-05-06 15:40", "2025-05-06 17:14", freq="min")
+    m1 = pd.DataFrame({"open": 100.0, "high": 101.0, "low": 99.0, "close": 100.0,
+                       "tick_volume": 100.0, "spread": 0.0}, index=index)
+    signal = resample(m1, 15)
+    result = run_backtest(
+        signal,
+        base_params(range_mode="avg_m1_box", range_avg_lookback=50,
+                    range_avg_multiplier=multiplier),
+        path=m1,
+    )
+    day = result.days.iloc[0]
+    assert day.orb_range == pytest.approx(expected_width)
+
+
+def test_flat_completed_ema_rejects_breakout_when_slope_filter_is_on():
+    history = []
+    for timestamp in pd.date_range("2025-05-05 00:00", "2025-05-06 15:45", freq="15min"):
+        history.append((timestamp, 95, 96, 94, 95))
+    rows = m15_day("2025-05-06", [
+        ("16:45", 95, 102, 94, 101),
+        ("17:00", 101, 120, 100, 118),
+    ])
+    result = run_backtest(
+        bars(history + rows),
+        base_params(filter_ma_period=3, filter_tf_minutes=60,
+                    filter_ma_slope_bars=2, filter_ma_min_slope_pct=0.01),
+    )
+    assert result.trades.empty
+    day = result.days.set_index("date").loc[pd.Timestamp("2025-05-06").date()]
+    assert day["long"] == "filtered"
+
+
 # --------------------------------------------------------------------------- #
 # immediate mode on M1 path data
 # --------------------------------------------------------------------------- #

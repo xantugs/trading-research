@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """One command: isolated setup, data, backtest, reports, optional checks and app.
 
-python run_all.py
+python run_all.py  # uses local data/USTEC_M1.csv when present, otherwise demo
 python run_all.py --source dukascopy
 python run_all.py --source dukascopy --data-only
+python run_all.py --source wrds --bars data/wrds/years --no-app
 python run_all.py --source csv --bars data/NAS100_M1.csv --no-app
 python run_all.py --check --no-app
 """
@@ -70,6 +71,52 @@ def pipeline(args) -> tuple[Path, Path | None]:
         data_path = folder / f"{args.symbol.upper()}_M1.csv"
         m1 = load_bars(data_path)
         source["label"] = f"Dukascopy {args.symbol.upper()} [{args.start}, {args.end}) UTC; clock {args.tz}"
+    elif args.source == "wrds":
+        import pandas as pd
+
+        if not args.bars:
+            raise ValueError("--source wrds requires --bars FILE_OR_DIRECTORY")
+        requested = args.bars.resolve()
+        if requested.is_file():
+            data_path = requested
+            m1 = load_bars(data_path)
+            inputs = [data_path]
+        elif requested.is_dir():
+            candidates = sorted({
+                file for pattern in ("*_M1.csv", "*_M1.csv.gz")
+                for file in requested.rglob(pattern)
+                if "prepared" not in file.parts
+            })
+            if not candidates:
+                raise ValueError(f"No *_M1.csv or *_M1.csv.gz files under {requested}")
+            # A transferred gzip and an independently unpacked copy represent
+            # the same input. Prefer gzip instead of treating that pair as two years.
+            by_uncompressed_name = {}
+            for file in candidates:
+                key = Path(str(file)[:-3]) if file.suffix.lower() == ".gz" else file
+                if key not in by_uncompressed_name or file.suffix.lower() == ".gz":
+                    by_uncompressed_name[key] = file
+            inputs = sorted(by_uncompressed_name.values())
+            frames = [load_bars(file) for file in inputs]
+            m1 = pd.concat(frames).sort_index()
+            if m1.index.has_duplicates:
+                duplicate = m1.index[m1.index.duplicated()].unique()[0]
+                raise ValueError(f"WRDS inputs overlap at {duplicate}; keep one file per date range")
+            prepared = ROOT / "data/wrds/prepared"
+            prepared.mkdir(parents=True, exist_ok=True)
+            symbol = args.symbol.upper()
+            start = m1.index.min().date().isoformat()
+            end = (m1.index.max() + pd.Timedelta(days=1)).date().isoformat()
+            data_path = prepared / f"{symbol}_{start}_{end}_M1.csv.gz"
+            m1.to_csv(data_path, compression="gzip", float_format="%.8f")
+        else:
+            raise ValueError(f"WRDS bars path does not exist: {requested}")
+        source.update(
+            label=f"WRDS NYSE TAQ / {args.symbol.upper()} consolidated NBBO M1",
+            clock="New York wall time + 7 hours",
+            price_basis="valid non-crossed consolidated NBBO best bid",
+            input_files=[file.name for file in inputs],
+        )
     else:
         if not args.bars:
             raise ValueError("--source csv requires --bars PATH to M1 bars in strategy clock time")
@@ -101,7 +148,8 @@ def pipeline(args) -> tuple[Path, Path | None]:
 
 def parse_args(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--source", choices=["demo", "dukascopy", "csv"], default="demo")
+    ap.add_argument("--source", choices=["auto", "demo", "dukascopy", "wrds", "csv"], default="auto",
+                    help="auto prefers data/USTEC_M1.csv and falls back to the synthetic demo")
     ap.add_argument("--from", dest="start",
                     help=f"UTC start date; Dukascopy default: {DEFAULT_DUKASCOPY_START}")
     ap.add_argument("--to", dest="end", default=datetime.now(timezone.utc).strftime("%Y-%m-%d"))
@@ -129,6 +177,14 @@ def parse_args(argv=None):
     ap.add_argument("--reinstall", action="store_true")
     ap.add_argument("--ea-log", type=Path, help="Reconcile local CSV against an EA log; requires --source csv")
     args = ap.parse_args(argv)
+    if args.source == "auto":
+        local_ustec = ROOT / "data/USTEC_M1.csv"
+        if args.bars:
+            args.source = "csv"
+        elif local_ustec.exists():
+            args.source, args.bars = "csv", local_ustec
+        else:
+            args.source = "demo"
     if args.demo_days < 1:
         ap.error("--demo-days must be positive")
     if not 1 <= args.port <= 65535:
@@ -143,6 +199,8 @@ def parse_args(argv=None):
         ap.error("--refresh-data requires --source dukascopy")
     if args.source == "dukascopy" and not args.start:
         args.start = DEFAULT_DUKASCOPY_START
+    if args.source == "wrds" and args.symbol == "USATECHIDXUSD":
+        args.symbol = "QQQ"
     return args
 
 

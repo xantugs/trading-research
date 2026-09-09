@@ -2,13 +2,21 @@
 
 ## Signal and stop rules
 
-One complete opening candle per strategy-clock date supplies high H, low L and
-width W. Close mode checks previous close <= H and last close > H for a long,
-or previous close >= L and last close < L for a short. Entry is the next
-signal bar's open, before cutoff. This catches gap breakouts. Immediate mode
-checks M1 highs/lows and can see both directions within one minute.
+The default range uses one complete opening candle per strategy-clock date for
+high H, low L and width W. Experimental `avg_m1_box` mode instead averages the
+high-low width of the prior N completed M1 candles, multiplies it by a selected
+positive factor, and centres that total width on the session-open price. The
+factor is free input rather than a fixed set of choices.
 
-Long stop = H - W * sl_ratio. Short stop = L + W * sl_ratio.
+Close mode can require N consecutive signal candles beyond the range. An
+optional colour rule also requires green candles for a long or red candles for
+a short. The close immediately before the sequence must be inside the range,
+so a breakout that reverses inside before completing confirmation is rejected.
+Entry is the next signal bar's open, before cutoff. Immediate mode checks M1
+highs/lows and does not use multi-candle confirmation.
+
+The default long stop is H - W * sl_ratio and the default short stop is
+L + W * sl_ratio. Midpoint mode places either initial stop at (H + L) / 2.
 A stop ratio below one puts the stop inside the range; one reaches the opposite
 edge; greater than one extends past it. The old prose describing an additional
 far-side offset was inaccurate. Target distance is entry-to-stop risk times
@@ -28,6 +36,16 @@ as an explicit utility but is no longer the engine default.
 
 EMA/SMA trend filters use completed higher-timeframe history plus a partial
 current-bar price approximation. A period-one SMA is exactly current price.
+The optional slope veto measures the signed percentage change between completed
+MA values. It deliberately lags one completed higher-timeframe bar so the
+breakout cannot manufacture the trend used to approve itself. Longs require a
+positive slope above the threshold; shorts require the corresponding negative
+slope.
+
+The range-proportion filter compares W with the high-low span of a completed
+lookback window, for example 120 minutes, and rejects W/span above a threshold
+such as 0.25. When enabled, it rejects days without full time coverage instead
+of silently shortening the window.
 Warmup requirements depend on ATR and MA lookbacks. Like the inherited EA,
 unavailable ATR or volume ratios do not veto a trade; missing trend history
 does. Fetch additional history when filters are on and inspect early days.

@@ -1,10 +1,10 @@
 # ORB Backtest
 
 A reproducible Opening Range Breakout research project with a MetaTrader 5 EA,
-a Python bar simulator, Dukascopy and MT5 data tools, trade reconciliation, and
+a Python bar simulator, Dukascopy, WRDS TAQ and MT5 data tools, trade reconciliation, and
 a Streamlit interface for someone who does not code.
 
-**Project version: 1.3.1.** The EA compiles locally with zero errors and warnings.
+**Project version: 1.4.0.** The EA compiles locally with zero errors and warnings.
 Python scenarios and the app are tested. Broker smoke testing and real-data
 reconciliation are still required. This repository does not establish a trading edge.
 
@@ -16,21 +16,25 @@ Install **Python 3.11–3.13**, open a terminal in this folder, then run:
 python run_all.py
 ```
 
-The launcher creates a local `.venv`, installs the project, generates a seeded
-120-day synthetic demo, runs the backtest, writes a report bundle under
-`outputs/`, and serves the app at [localhost:8501](http://localhost:8501).
+The launcher creates a local `.venv`, installs the project, uses
+`data/USTEC_M1.csv` when that local file exists, runs the backtest, writes a
+report bundle under `outputs/`, and serves the app at
+[localhost:8501](http://localhost:8501). A clean checkout without local USTEC
+data falls back to a seeded 120-day synthetic software demo.
 Open that address; the first result loads automatically. Ctrl+C stops it.
 First setup needs internet; installed demo runs need no market-data connection.
 The launcher works from another working directory when invoked by full path.
 
 | Task | Command |
 | --- | --- |
+| Run the synthetic software demo explicitly | `python run_all.py --source demo` |
 | Test the whole Python project and make a demo report | `python run_all.py --check --no-app` |
 | Compile the EA too (Windows with MT5 installed) | `python run_all.py --check --compile-mt5 --no-app` |
 | Use an existing Python environment without installs | `python run_all.py --no-install --no-app` |
 | Change settings | `python run_all.py --set tp_ratio=2 --set risk_pct=1 --no-app` |
 | Prepare the full Dukascopy dataset only | `python run_all.py --source dukascopy --data-only` |
 | Prepare Dukascopy data, backtest and open the app | `python run_all.py --source dukascopy` |
+| Merge downloaded WRDS years and run | `python run_all.py --source wrds --bars data/wrds/years --symbol QQQ --config configs/discussion.json --no-app` |
 | Run local M1 bars already in the strategy clock | `python run_all.py --source csv --bars data/NAS100_M1.csv --no-app` |
 | Start only the app after setup | `.venv/Scripts/python -m streamlit run app.py` (Windows) |
 
@@ -110,6 +114,12 @@ Edit [configs/baseline.json](configs/baseline.json), pass `--config FILE`, or us
 repeated `--set key=value` arguments. Booleans are `true/false`; an optional
 close time can be disabled with `--set eod_close=null`.
 
+`configs/discussion.json` captures the current research hypothesis: a 50-M1
+average range box, three same-colour confirmation candles, midpoint stop,
+one-quarter/two-hour range veto and a lagged H1 EMA slope threshold. Treat every
+number as a test parameter. The range multiplier accepts any positive decimal;
+compare chosen values in separately saved runs.
+
 The supplied research config uses 16:30 / 19:00, 1.5R target, range-multiple stop,
 2% equity sizing, a **1.0 price-unit constant spread assumption**, and EOD at
 22:45. The EA's inherited default has EOD **off**; enable `InpCloseEod` when
@@ -161,15 +171,19 @@ For an integrated local-data run add `--ea-log PATH` to
 
 ## What the engine implements
 
-Opening range = one completed signal candle. A close-confirmed breakout enters
-at the next signal candle's open when the prior close crossed the range.
+The default opening range is one completed signal candle. Experimental Python
+mode can instead centre a box on the session open with total width equal to a
+multiple of the average range of the prior 50 M1 candles. A close-confirmed
+breakout can require several consecutive closes beyond the box and matching
+candle colour, then enters at the next signal candle's open.
 Immediate mode uses the first M1 crossing. Each direction has one attempt per
 strategy-clock day; a trend veto consumes the attempt.
 
-For range width W, long SL = high − W × SL ratio; short SL = low + W × SL ratio.
-A ratio of 1 puts the stop on the far edge. TP = entry ± initial risk × TP ratio.
-The engine also supports daily ATR and volume filters, higher-timeframe EMA/SMA,
-EOD close, breakeven and trailing. [Exact model and limitations](docs/MODEL.md).
+Stops can use a range multiple or the H/L midpoint. The engine also supports a
+full-window range proportion veto, daily ATR and volume filters, higher-timeframe
+EMA/SMA with a normalized slope veto, EOD close, breakeven and trailing. The new
+strategy switches are currently Python experiments; the EA still follows its
+v1.30 rules. [Exact model and limitations](docs/MODEL.md).
 
 ## Project layout
 
@@ -179,6 +193,7 @@ mt5/                    EA source (compiled files stay local)
 configs/                versioned experiment defaults
 tests/                  engine, provider, report, CLI and app scenarios
 scripts/compile_mt5.ps1  repeatable MetaEditor compilation
+scripts/wrds_*.py/.sh    WRDS raw and cloud M1 extraction
 fetch_dukascopy.py       cached public-feed download
 fetch_mt5.py             optional Windows terminal bridge
 reconcile.py             EA/Python comparison
@@ -205,7 +220,7 @@ GitHub Actions runs lint, tests and a demo pipeline on Windows/Linux and Python
 3.11/3.13, with a separate package build. Network market downloads and MT5
 terminal tests are deliberately manual. [Publishing instructions](docs/GITHUB.md).
 
-WRDS is a planned provider after account approval and dataset entitlements;
-nothing connects to WRDS yet. [Roadmap](docs/ROADMAP.md) ·
+WRDS Cloud extraction is documented in [the WRDS workflow](docs/WRDS.md).
+[Roadmap](docs/ROADMAP.md) ·
 [Changelog](CHANGELOG.md) · [Provenance](docs/PROVENANCE.md).
-No open-source license has been selected; provider data rights are separate.
+Source code is MIT-licensed; provider market-data rights remain separate.

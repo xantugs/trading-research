@@ -28,6 +28,8 @@ PLOT_CONFIG = {"displaylogo": False, "scrollZoom": False,
 PRESETS = {
     "Baseline": ({}, "Close confirmation, both directions, 1.5R target. Flat at 22:45."),
     "Tighter stop": ({"sl_ratio": 0.5}, "Stop halfway into the opening range. Keep an eye on stop-outs."),
+    "Midpoint stop": ({"stop_mode": "midpoint"}, "Place the initial stop at the centre of the range."),
+    "Average M1 box": ({"range_mode": "avg_m1_box"}, "Range width is an editable multiple of the prior 50 M1 candles."),
     "2R target": ({"tp_ratio": 2.0}, "A wider target with the same entry and stop rules."),
     "Immediate breakout": ({"entry_mode": "immediate"}, "Enter on the first crossing. M1 cannot reveal exact tick order."),
     "Long + trend": ({"direction": "long", "filter_ma_period": 50}, "Longs above the H1 EMA(50). Includes a history warmup."),
@@ -35,9 +37,12 @@ PRESETS = {
     "Trail the move": ({"tp_ratio": 5.0, "trail_start_r": 1.0}, "Start trailing at 1R, at a distance of 1R."),
 }
 STRATEGY_FIELDS = (
-    "entry_mode", "direction", "tp_ratio", "sl_ratio", "eod_close",
-    "atr_period", "min_range_atr", "max_range_atr", "vol_lookback", "vol_spike_min",
-    "filter_ma_period", "filter_tf_minutes", "filter_ma_method", "breakeven_at_r",
+    "entry_mode", "direction", "range_mode", "range_avg_lookback", "range_avg_multiplier",
+    "confirmation_bars", "confirmation_same_color", "tp_ratio", "sl_ratio", "stop_mode", "eod_close",
+    "atr_period", "min_range_atr", "max_range_atr", "range_lookback_minutes",
+    "max_range_lookback_ratio", "vol_lookback", "vol_spike_min", "filter_ma_period",
+    "filter_tf_minutes", "filter_ma_method", "filter_ma_slope_bars", "filter_ma_min_slope_pct",
+    "breakeven_at_r",
     "breakeven_lock_r", "trail_start_r", "trail_dist_r", "trail_step_r",
 )
 
@@ -113,7 +118,7 @@ def plot(fig, key):
 
 
 def initialize():
-    if st.session_state.get("workspace_version") == 2:
+    if st.session_state.get("workspace_version") == 3:
         return
     path = os.environ.get("ORB_PARAMS_FILE")
     p = st.session_state.get("cfg") or (load_params(path) if path else load_params(ROOT / "configs/baseline.json"))
@@ -123,7 +128,7 @@ def initialize():
     st.session_state.p_eod_text = p.eod_close or "22:45"
     st.session_state.signal_tf = int(os.environ.get("ORB_SIGNAL_TF", "15"))
     st.session_state.experiments = []
-    st.session_state.workspace_version = 2
+    st.session_state.workspace_version = 3
 
 
 def apply_preset():
@@ -151,7 +156,8 @@ def sidebar():
     with st.sidebar:
         st.markdown('<div class="orb-eyebrow">Strategy research</div><div class="orb-brand">ORB<span> / </span>Lab</div>', unsafe_allow_html=True)
         st.caption("Opening range. Every assumption visible.")
-        paths = sorted(p.resolve() for p in DATA_DIR.rglob("*_M1.csv"))
+        paths = sorted({p.resolve() for pattern in ("*_M1.csv", "*_M1.csv.gz")
+                        for p in DATA_DIR.rglob(pattern)})
         selected = os.environ.get("ORB_DATA_FILE")
         if selected and Path(selected).exists():
             selected = Path(selected).resolve()
@@ -175,11 +181,20 @@ def sidebar():
                  key="p_direction", format_func=lambda v: v.title())
         st.selectbox("Entry confirmation", ["close", "immediate"], key="p_entry_mode",
                      format_func=lambda v: "Candle close" if v == "close" else "First price crossing")
+        close_mode = st.session_state.p_entry_mode == "close"
+        st.number_input("Confirmation candles", 1, 10, key="p_confirmation_bars", disabled=not close_mode,
+                        help="Consecutive signal candles that must close beyond the range.")
+        st.toggle("Require matching candle colour", key="p_confirmation_same_color", disabled=not close_mode,
+                  help="Long confirmations close green; short confirmations close red.")
         # Sliders expose the common research range; numeric extras never silently clamp.
         st.slider("Target · R", 0.1, max(5.0, float(st.session_state.p_tp_ratio)),
                   step=0.1, key="p_tp_ratio")
+        st.selectbox("Initial stop", ["range_multiple", "midpoint"], key="p_stop_mode",
+                     format_func=lambda v: "Opening-range multiple" if v == "range_multiple"
+                     else "Range midpoint")
         st.slider("Stop · × opening range", 0.05, max(3.0, float(st.session_state.p_sl_ratio)),
                   step=0.05, key="p_sl_ratio",
+                  disabled=st.session_state.p_stop_mode == "midpoint",
                   help="1.0 places the stop at the opposite edge of the range.")
         st.slider("Risk · % equity", 0.1, max(10.0, float(st.session_state.p_risk_pct)),
                   step=0.1, key="p_risk_pct")
@@ -192,6 +207,19 @@ def sidebar():
             with b:
                 st.number_input("Range minute", 0, 59, key="p_orb_minute")
             st.number_input("Entry cutoff hour", 1, 23, key="p_cutoff_hour")
+            st.selectbox("Range construction", ["signal_bar", "avg_m1_box"], key="p_range_mode",
+                         format_func=lambda v: "Signal candle high–low" if v == "signal_bar"
+                         else "Average M1 range box")
+            a, b = st.columns(2)
+            with a:
+                number("M1 candles", "range_avg_lookback", minimum=1, step=1,
+                       help="Completed one-minute candles before the range starts.")
+            with b:
+                number("Box width · × average", "range_avg_multiplier", minimum=0.01, step=0.05, fmt="%.2f",
+                       help="Type any positive decimal multiplier.")
+            st.caption("Enter any positive decimal multiplier for the total box width.")
+            if st.session_state.p_range_mode == "signal_bar":
+                st.caption("M1 box settings apply only to Average M1 range box.")
             st.checkbox("Flat at end of session", key="p_eod_on")
             st.text_input("Close time · HH:MM", key="p_eod_text", disabled=not st.session_state.p_eod_on)
             st.caption("These are dataset-clock times. ny+7 maps 09:30 New York to 16:30 year-round.")
@@ -203,13 +231,26 @@ def sidebar():
                 number("Min range / ATR", "min_range_atr")
             with b:
                 number("Max range / ATR", "max_range_atr")
+            a, b = st.columns(2)
+            with a:
+                number("Prior range window · min", "range_lookback_minutes", minimum=1, step=15)
+            with b:
+                number("Max range / prior range", "max_range_lookback_ratio", step=0.05,
+                       help="0 disables. Use 0.25 for the proposed one-quarter threshold.")
             number("Volume lookback", "vol_lookback", step=1)
             number("Required volume ratio", "vol_spike_min")
             number("Trend MA period", "filter_ma_period", step=1)
             st.selectbox("Trend timeframe", sorted(set([15, 30, 60, 240, 1440, st.session_state.p_filter_tf_minutes])),
                          key="p_filter_tf_minutes", format_func=lambda v: f"{v} minutes")
             st.radio("MA method", ["ema", "sma"], horizontal=True, key="p_filter_ma_method")
-            st.caption("Zero disables a filter. Volume is a source-dependent proxy, not a session calendar.")
+            a, b = st.columns(2)
+            with a:
+                number("MA slope bars", "filter_ma_slope_bars", step=1,
+                       help="Completed trend-timeframe bars used to measure the MA change.")
+            with b:
+                number("Min MA slope · %", "filter_ma_min_slope_pct", step=0.01, fmt="%.3f",
+                       help="Minimum signed percentage change across the selected slope bars.")
+            st.caption("Zero disables a filter. EMA slope uses completed bars. Volume depends on the source.")
 
         with st.expander("Breakeven & trailing"):
             number("Breakeven trigger · R", "breakeven_at_r")
@@ -322,7 +363,13 @@ def trade_chart(record, trade):
         x=candles.index, open=candles.open, high=candles.high, low=candles.low, close=candles.close,
         increasing_line_color=TEAL, decreasing_line_color=RED, name=f"M{record['tf']} candles",
     ))
-    fig.add_hrect(y0=trade.orb_low, y1=trade.orb_high, fillcolor=TEAL, opacity=.07, line_width=0)
+    fig.add_hrect(y0=trade.orb_low, y1=trade.orb_high, fillcolor=TEAL, opacity=.12, line_width=0)
+    fig.add_hline(y=trade.orb_high, line_dash="dash", line_color=TEAL,
+                  annotation_text="Range high", annotation_font_color=TEAL,
+                  annotation_position="top right")
+    fig.add_hline(y=trade.orb_low, line_dash="dash", line_color=TEAL,
+                  annotation_text="Range low", annotation_font_color=TEAL,
+                  annotation_position="bottom right")
     fig.add_vrect(x0=trade.orb_time, x1=trade.orb_time + pd.Timedelta(minutes=record["tf"]),
                   fillcolor=TEAL, opacity=.13, line_width=0)
     for price, label, color in [(trade.sl, "Initial SL", RED), (trade.tp, "Target", BLUE),
@@ -361,11 +408,14 @@ def trades_view(record):
                               key="trade_dates_" + record["id"])
     subset = filtered_trades(trades, directions, reasons, dates)
     st.caption(f"{len(subset)} of {len(trades)} trades shown")
-    columns = ["entry_time", "direction", "entry", "sl", "tp", "exit_time", "exit", "reason", "r", "lots", "profit"]
+    columns = ["entry_time", "direction", "range_mode", "orb_range", "entry", "sl", "tp",
+               "exit_time", "exit", "reason", "r", "lots", "profit"]
     st.dataframe(subset[columns], hide_index=True, width="stretch", height=300,
                  column_config={"r": st.column_config.NumberColumn("Gross R", format="%.2f"),
                                 "profit": st.column_config.NumberColumn("Net P/L", format="%.2f"),
-                                "entry": st.column_config.NumberColumn("Entry", format="%.2f"),
+                                 "entry": st.column_config.NumberColumn("Entry", format="%.2f"),
+                                 "range_mode": "Range construction",
+                                 "orb_range": st.column_config.NumberColumn("Range width", format="%.3f"),
                                 "sl": st.column_config.NumberColumn("Initial SL", format="%.2f"),
                                 "tp": st.column_config.NumberColumn("Target", format="%.2f"),
                                 "exit": st.column_config.NumberColumn("Exit", format="%.2f"),
@@ -383,10 +433,13 @@ def trades_view(record):
             key="inspect_" + record["id"],
         )
         trade = subset.loc[selected]
-        st.caption(f"Opening range {trade.orb_low:,.2f}–{trade.orb_high:,.2f} · "
+        st.caption(f"{trade.range_mode} · width {trade.orb_range:,.3f} · "
+                   f"bounds {trade.orb_low:,.2f}–{trade.orb_high:,.2f} · "
                    f"Initial risk {trade.risk_dist:,.2f} · {trade.lots:g} lots · Net P/L {trade.profit:+,.2f}")
         plot(trade_chart(record, trade), "trade_candles_" + record["id"])
-        st.caption(f"M{record['tf']} candles · shaded band = opening range · shaded candle = range capture. "
+        anchor_label = "range capture" if record["result"].params.range_mode == "signal_bar" else "box anchor"
+        st.caption(f"M{record['tf']} candles · teal band and dashed lines = opening range · "
+                   f"shaded candle = {anchor_label}. "
                    "SL shows the initial level, not later trailing changes. Long holds show the first three days.")
 
 

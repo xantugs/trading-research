@@ -11,7 +11,11 @@ The rules are the EA's rules, expressed on bar data:
   (or bid below the low) -> entry at max(open ask, high + point).
 * First breakout per direction per day only; a signal vetoed by the trend
   filter still consumes that direction.
-* Stop = far side of the range +/- range x sl_ratio, target = risk x tp_ratio.
+* The range can be the signal candle or a box centred on the session open whose
+  width is a multiple of the average of recent M1 candle ranges.
+* Close confirmation can require several consecutive closes beyond the range,
+  optionally with candle colour matching the breakout direction.
+* Stop = range midpoint or far side +/- range x sl_ratio; target = risk x tp_ratio.
 * Exits are resolved on the *path* data (ideally M1; the signal bars if that is
   all you have).  MT5 closes longs on the bid and shorts on the ask, so short
   stops/targets are compared against bid + spread.  A bar that touches both the
@@ -47,8 +51,14 @@ class Params:
     # strategy
     entry_mode: str = "close"          # "close" | "immediate"
     direction: str = "both"            # "both" | "long" | "short"
+    range_mode: str = "signal_bar"      # "signal_bar" | "avg_m1_box"
+    range_avg_lookback: int = 50
+    range_avg_multiplier: float = 1.0
+    confirmation_bars: int = 1
+    confirmation_same_color: bool = False
     tp_ratio: float = 1.5
     sl_ratio: float = 1.0
+    stop_mode: str = "range_multiple"   # "range_multiple" | "midpoint"
     risk_pct: float = 2.0
     # end of day
     eod_close: Optional[str] = None    # "22:45" or None
@@ -56,12 +66,16 @@ class Params:
     atr_period: int = 14
     min_range_atr: float = 0.0
     max_range_atr: float = 0.0
+    range_lookback_minutes: int = 120
+    max_range_lookback_ratio: float = 0.0
     vol_lookback: int = 8
     vol_spike_min: float = 0.0         # > 0: skip days whose range candle has no volume spike
     # higher-timeframe trend filter
     filter_ma_period: int = 0
     filter_tf_minutes: int = 60
     filter_ma_method: str = "ema"      # "ema" | "sma"
+    filter_ma_slope_bars: int = 0
+    filter_ma_min_slope_pct: float = 0.0
     # exit management (R = initial risk distance)
     breakeven_at_r: float = 0.0
     breakeven_lock_r: float = 0.0
@@ -122,6 +136,10 @@ class Params:
             raise ValueError("eod_close must not be earlier than the cutoff hour")
         if self.entry_mode not in ("close", "immediate"):
             raise ValueError("entry_mode must be 'close' or 'immediate'")
+        if self.range_mode not in ("signal_bar", "avg_m1_box"):
+            raise ValueError("range_mode must be 'signal_bar' or 'avg_m1_box'")
+        if self.stop_mode not in ("range_multiple", "midpoint"):
+            raise ValueError("stop_mode must be 'range_multiple' or 'midpoint'")
         if self.direction not in ("both", "long", "short"):
             raise ValueError("direction must be 'both', 'long' or 'short'")
         if self.trail_start_r > 0 and self.trail_dist_r <= 0:
@@ -130,13 +148,27 @@ class Params:
             raise ValueError("Invalid same_bar_rule")
         if self.filter_ma_method not in ("ema", "sma"):
             raise ValueError("Invalid filter_ma_method")
+        if self.confirmation_bars < 1:
+            raise ValueError("confirmation_bars must be positive")
+        if self.range_avg_lookback < 1:
+            raise ValueError("range_avg_lookback must be positive")
+        if self.range_avg_multiplier <= 0:
+            raise ValueError("range_avg_multiplier must be positive")
+        if self.range_lookback_minutes < 1:
+            raise ValueError("range_lookback_minutes must be positive")
+        if self.filter_ma_min_slope_pct > 0 and self.filter_ma_slope_bars < 1:
+            raise ValueError("filter_ma_slope_bars must be positive when the slope filter is on")
+        if self.filter_ma_min_slope_pct > 0 and self.filter_ma_period < 1:
+            raise ValueError("filter_ma_period must be positive when the slope filter is on")
         if self.filter_tf_minutes < tf_minutes or self.filter_tf_minutes % tf_minutes or 1440 % self.filter_tf_minutes:
             raise ValueError("MA timeframe must be a multiple of signal timeframe and divide 1440")
         for name in ("initial_balance", "point", "point_value", "lot_step", "min_lot", "max_lot"):
             if getattr(self, name) <= 0:
                 raise ValueError(f"{name} must be positive")
         for name in ("spread", "commission_per_lot", "atr_period", "min_range_atr", "max_range_atr",
-                     "vol_lookback", "vol_spike_min", "filter_ma_period", "breakeven_at_r",
+                     "vol_lookback", "vol_spike_min", "filter_ma_period", "filter_ma_slope_bars",
+                     "filter_ma_min_slope_pct", "max_range_lookback_ratio",
+                     "breakeven_at_r",
                      "breakeven_lock_r", "trail_start_r", "trail_dist_r", "trail_step_r"):
             if getattr(self, name) < 0:
                 raise ValueError(f"{name} must be nonnegative")
@@ -226,6 +258,10 @@ def run_backtest(bars: pd.DataFrame, params: Params, path: Optional[pd.DataFrame
 
     trend = _TrendFilter(bars, p) if p.filter_ma_period > 0 else None
 
+    path_minutes = infer_minutes(path)
+    if p.range_mode == "avg_m1_box" and path_minutes != 1:
+        raise ValueError("avg_m1_box requires an M1 path")
+
     # opening-range candle of each day
     orb_mask = (sig.hour == p.orb_hour) & (sig.minute == p.orb_minute)
     orb_indices = np.flatnonzero(orb_mask)
@@ -235,14 +271,45 @@ def run_backtest(bars: pd.DataFrame, params: Params, path: Optional[pd.DataFrame
 
     for orb_i in orb_indices:
         day = sig.day[orb_i]
-        o_h, o_l = sig.h[orb_i], sig.l[orb_i]
+        orb_time = pd.Timestamp(sig.t[orb_i])
+        prior_path = path.loc[path.index < orb_time]
+        range_note = "signal bar"
+        if p.range_mode == "avg_m1_box":
+            previous = prior_path.tail(p.range_avg_lookback)
+            if len(previous) < p.range_avg_lookback:
+                days.append({
+                    "date": orb_time.date(), "orb_time": orb_time,
+                    "orb_high": np.nan, "orb_low": np.nan, "orb_range": np.nan,
+                    "range_mode": f"M1 average x {p.range_avg_multiplier:g}",
+                    "range_lookback_ratio": np.nan, "range_atr": 0.0, "vol_ratio": 0.0,
+                    "status": "skipped: insufficient M1 range history", "long": "", "short": "",
+                })
+                continue
+            average_m1 = float((previous.high - previous.low).mean())
+            width = average_m1 * p.range_avg_multiplier
+            anchor = float(sig.o[orb_i])
+            o_h, o_l = anchor + width / 2, anchor - width / 2
+            range_note = f"M1 average x {p.range_avg_multiplier:g}"
+        else:
+            o_h, o_l = sig.h[orb_i], sig.l[orb_i]
         rng = o_h - o_l
+        history_start = orb_time - pd.Timedelta(minutes=p.range_lookback_minutes)
+        history = prior_path.loc[prior_path.index >= history_start]
+        history_complete = bool(
+            len(history)
+            and history.index[0] <= history_start + pd.Timedelta(minutes=path_minutes)
+            and history.index[-1] >= orb_time - pd.Timedelta(minutes=path_minutes)
+        )
+        history_span = float(history.high.max() - history.low.min()) if len(history) else 0.0
+        lookback_ratio = rng / history_span if history_complete and history_span > 0 else np.nan
         rec = {
             "date": pd.Timestamp(day).date(),
             "orb_time": pd.Timestamp(sig.t[orb_i]),
             "orb_high": o_h,
             "orb_low": o_l,
             "orb_range": rng,
+            "range_mode": range_note,
+            "range_lookback_ratio": lookback_ratio,
             "range_atr": 0.0,
             "vol_ratio": 0.0,
             "status": "no signal",
@@ -254,6 +321,13 @@ def run_backtest(bars: pd.DataFrame, params: Params, path: Optional[pd.DataFrame
         if rng <= 0:
             rec["status"] = "skipped: zero range"
             continue
+        if p.max_range_lookback_ratio > 0:
+            if not history_complete or not np.isfinite(lookback_ratio):
+                rec["status"] = "skipped: insufficient range lookback history"
+                continue
+            if lookback_ratio > p.max_range_lookback_ratio:
+                rec["status"] = "skipped: range too large vs lookback"
+                continue
 
         atr_val = atr_by_day.get(day)
         range_atr = rng / atr_val if atr_val and atr_val > 0 else 0.0
@@ -283,10 +357,10 @@ def run_backtest(bars: pd.DataFrame, params: Params, path: Optional[pd.DataFrame
             if path_start >= len(pth.t) or pth.t[path_start] != entry_time:
                 raise ValueError(f"Exit path is missing the entry bar at {entry_time}")
             if direction > 0:
-                sl = o_h - rng * p.sl_ratio
+                sl = (o_h + o_l) / 2 if p.stop_mode == "midpoint" else o_h - rng * p.sl_ratio
                 tp = entry + (entry - sl) * p.tp_ratio
             else:
-                sl = o_l + rng * p.sl_ratio
+                sl = (o_h + o_l) / 2 if p.stop_mode == "midpoint" else o_l + rng * p.sl_ratio
                 tp = entry - (sl - entry) * p.tp_ratio
             if (direction > 0 and sl >= entry) or (direction < 0 and sl <= entry):
                 rec["long" if direction > 0 else "short"] = "skipped: entry beyond stop"
@@ -304,6 +378,8 @@ def run_backtest(bars: pd.DataFrame, params: Params, path: Optional[pd.DataFrame
                 "orb_high": o_h,
                 "orb_low": o_l,
                 "orb_range": rng,
+                "range_mode": range_note,
+                "range_lookback_ratio": lookback_ratio,
                 "range_atr": range_atr,
                 "vol_ratio": vol_ratio,
                 "signal_time": pd.Timestamp(signal_time),
@@ -321,15 +397,26 @@ def run_backtest(bars: pd.DataFrame, params: Params, path: Optional[pd.DataFrame
             rec["status"] = "traded"
 
         if p.entry_mode == "close":
-            i = orb_i + 1
+            i = orb_i if p.range_mode == "avg_m1_box" else orb_i + 1
             while i + 1 < n_sig and sig.day[i + 1] == day:
                 if sig.hour[i + 1] >= p.cutoff_hour:       # the entry bar would be at/after the cutoff
                     break
-                prev_c, last_c = sig.c[i - 1], sig.c[i]
                 direction = 0
-                if not long_taken and allow_long and prev_c <= o_h and last_c > o_h:
+                first = i - p.confirmation_bars + 1
+                before = first - 1
+                if first < 0 or sig.day[first] != day:
+                    i += 1
+                    continue
+                long_closes = bool(np.all(sig.c[first:i + 1] > o_h))
+                short_closes = bool(np.all(sig.c[first:i + 1] < o_l))
+                if p.confirmation_same_color:
+                    long_closes &= bool(np.all(sig.c[first:i + 1] > sig.o[first:i + 1]))
+                    short_closes &= bool(np.all(sig.c[first:i + 1] < sig.o[first:i + 1]))
+                if (not long_taken and allow_long and before >= 0 and sig.c[before] <= o_h
+                        and long_closes):
                     direction = 1
-                elif not short_taken and allow_short and prev_c >= o_l and last_c < o_l:
+                elif (not short_taken and allow_short and before >= 0 and sig.c[before] >= o_l
+                      and short_closes):
                     direction = -1
                 if direction != 0:
                     if direction > 0:
@@ -337,13 +424,14 @@ def run_backtest(bars: pd.DataFrame, params: Params, path: Optional[pd.DataFrame
                     else:
                         short_taken = True
                     entry_time = sig.t[i + 1]
-                    if trend is not None and not trend.allows(direction, last_c, entry_time):
+                    signal_close = sig.c[i]
+                    if trend is not None and not trend.allows(direction, signal_close, entry_time):
                         rec["long" if direction > 0 else "short"] = "filtered"
                     else:
                         spread = _spread_at(pth, p, entry_time)
                         entry = sig.o[i + 1] + (spread if direction > 0 else 0.0)
                         path_start = int(np.searchsorted(pth.t, entry_time))
-                        open_trade(direction, entry, entry_time, path_start, entry_time)
+                        open_trade(direction, entry, entry_time, path_start, sig.t[i])
                 i += 1
         else:
             orb_end = sig.t[orb_i] + np.timedelta64(tf, "m")
@@ -369,8 +457,8 @@ def run_backtest(bars: pd.DataFrame, params: Params, path: Optional[pd.DataFrame
                 j += 1
 
     trade_columns = ["date", "direction", "dir", "orb_time", "orb_high", "orb_low", "orb_range",
-                     "range_atr", "vol_ratio", "signal_time", "entry_time", "entry", "sl", "tp",
-                     "risk_dist", "exit_time", "exit", "reason", "r"]
+                     "range_mode", "range_lookback_ratio", "range_atr", "vol_ratio", "signal_time",
+                     "entry_time", "entry", "sl", "tp", "risk_dist", "exit_time", "exit", "reason", "r"]
     trades_df = pd.DataFrame(trades, columns=trade_columns)
     days_df = pd.DataFrame(days)
     trades_df, equity = _simulate_money(trades_df, p, start_time=bars.index[0])
@@ -500,7 +588,25 @@ class _TrendFilter:
         ma = self.value(price, when)
         if ma is None:
             return False                       # the EA also skips when the MA has no value
-        return price > ma if direction > 0 else price < ma
+        price_side = price > ma if direction > 0 else price < ma
+        if not price_side or self.p.filter_ma_min_slope_pct <= 0:
+            return price_side
+        ts = pd.Timestamp(when)
+        bar_start = ts.floor(f"{self.p.filter_tf_minutes}min")
+        completed = self.closes.loc[: bar_start - pd.Timedelta(seconds=1)]
+        n = self.p.filter_ma_slope_bars
+        # Lag the slope by one completed HTF bar. This measures the trend that
+        # existed before the breakout instead of letting the breakout create
+        # the slope used to approve itself.
+        if len(completed) < self.p.filter_ma_period + n + 1:
+            return False
+        latest_ma = float(self.ma_completed.loc[completed.index[-2]])
+        previous_ma = float(self.ma_completed.loc[completed.index[-(n + 2)]])
+        if not np.isfinite(latest_ma) or not np.isfinite(previous_ma) or previous_ma == 0:
+            return False
+        slope_pct = (latest_ma - previous_ma) / abs(previous_ma) * 100.0
+        return slope_pct >= self.p.filter_ma_min_slope_pct if direction > 0 else (
+            slope_pct <= -self.p.filter_ma_min_slope_pct)
 
 
 def _simulate_money(trades: pd.DataFrame, p: Params, start_time) -> tuple[pd.DataFrame, pd.Series]:

@@ -29,6 +29,14 @@ def test_csv_bytes_and_mt5_roundtrip(tmp_path):
     assert (loaded.tick_volume == 1).all()
 
 
+def test_gzip_csv_roundtrip(tmp_path):
+    target = tmp_path / "QQQ_M1.csv.gz"
+    frame = sample()
+    frame.index.name = "time"
+    frame.to_csv(target, compression="gzip")
+    pd.testing.assert_frame_equal(load_bars(target), normalise(frame), check_freq=False)
+
+
 @pytest.mark.parametrize("problem", ["nan", "negative", "envelope", "duplicate", "spread", "aware", "empty"])
 def test_invalid_bars_fail(problem):
     frame = sample()

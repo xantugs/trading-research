@@ -90,12 +90,21 @@ dates and the M1 checksum. Result manifests capture the normalized source hash.
 Check the provider's applicable access and redistribution terms before sharing
 market data; this repository supplies software, not a data redistribution grant.
 
-## WRDS later
+## WRDS NYSE TAQ
 
-Account approval is not the same as entitlement to every dataset. Before adding
-a connector, identify the product, instrument coverage, granularity, timestamp
-convention, corporate-action handling and permitted exports. Daily equity
-tables cannot replace M1 CFD execution paths. A future WRDS adapter should
-produce the same canonical bars plus provider metadata and adapter tests.
-No credentials, placeholders that claim a working connection, or WRDS package
-dependency are included now.
+The WRDS Cloud scripts use the licensed NYSE TAQ Millisecond Daily Product for
+QQQ. `wrds_build_m1.py` queries daily consolidated NBBO and trade tables on the
+WRDS compute nodes and transfers only compact M1 output. OHLC comes from valid,
+non-crossed best bids. Spread is the within-minute 95th percentile NBBO spread,
+rounded up to symbol points. `tick_volume` counts positive consolidated trades
+with correction code `00`; `real_volume` sums their share size.
+
+TAQ source timestamps are New York wall time. The builder adds seven hours so
+09:30 is stored as 16:30 throughout the year, matching the project strategy
+clock. Its 07:30 source start provides two full hours before the opening range.
+Gzip CSV input is accepted directly by the loader and ORB Lab.
+
+The separate raw extractor writes consolidated trades and complete NBBO quote
+updates by day. These are event-level SIP records, not full depth-of-book data,
+and they are not broker CFD ticks. The current Python engine remains M1-driven.
+See [the WRDS workflow](WRDS.md).

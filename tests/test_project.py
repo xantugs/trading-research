@@ -22,6 +22,8 @@ ROOT = Path(__file__).resolve().parents[1]
     {"eod_close": "25:00"}, {"orb_hour": -1}, {"lot_step": 0},
     {"min_lot": 101}, {"spread": -1}, {"filter_ma_method": "wma"}, {"atr_period": "14"},
     {"use_data_spread": "false"}, {"filter_tf_minutes": 0},
+    {"range_avg_multiplier": 0}, {"confirmation_bars": 0},
+    {"filter_ma_period": 0, "filter_ma_slope_bars": 2, "filter_ma_min_slope_pct": 0.1},
 ])
 def test_parameter_validation(change):
     with pytest.raises(ValueError):
@@ -94,6 +96,17 @@ def test_dukascopy_one_flag_has_research_defaults():
     assert args.symbol == "USATECHIDXUSD"
     assert args.tz == "ny+7"
     assert args.end
+
+
+def test_auto_source_with_explicit_bars_becomes_csv():
+    args = parse_args(["--source", "auto", "--bars", "data/ANY_M1.csv"])
+    assert args.source == "csv"
+    assert args.bars == Path("data/ANY_M1.csv")
+
+
+def test_wrds_source_defaults_to_qqq():
+    args = parse_args(["--source", "wrds", "--bars", "data/wrds/years"])
+    assert args.symbol == "QQQ"
 
 
 def test_data_only_prepares_local_bars_without_report(tmp_path):

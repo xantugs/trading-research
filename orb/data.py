@@ -14,8 +14,9 @@ Everything is normalised to a DataFrame indexed by a naive DatetimeIndex called
 """
 from __future__ import annotations
 
-from pathlib import Path
 import io
+import gzip
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -31,7 +32,8 @@ def load_bars(path: str | Path | bytes) -> pd.DataFrame:
         path.seek(0)
     else:
         path = Path(path)
-        with path.open("r", encoding="utf-8-sig") as handle:
+        opener = gzip.open if path.suffix.lower() == ".gz" else open
+        with opener(path, "rt", encoding="utf-8-sig") as handle:
             head = handle.readline()
 
     if head.startswith("<DATE>"):

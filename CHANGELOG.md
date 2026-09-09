@@ -1,5 +1,22 @@
 # Changelog
 
+## 1.4.0 — 2026-09-09
+
+- Added Python experiment switches for average-M1 range boxes, multi-candle and
+  same-colour breakout confirmation, midpoint stops, prior-window range-ratio
+  rejection and a lagged normalized EMA/SMA slope veto.
+- Exposed the new rules in the dark Streamlit workspace and added a documented
+  `configs/discussion.json` research starting point.
+- Made the average-range multiplier a fine-grained free numeric input and added
+  labeled range bounds, construction and width to trade inspection.
+- Added WRDS NYSE TAQ daily raw extraction, cloud-side QQQ M1 aggregation,
+  legacy-schema detection, SGE yearly jobs and durable progress bars.
+- Added local WRDS gzip and directory input to `run_all.py`; yearly inputs are
+  merged with overlap rejection and remain outside Git.
+- Changed WRDS extraction coverage to 07:30 New York so the proposed two-hour
+  pre-range filter has complete history. Added direct gzip loading.
+- Kept the experimental switches explicitly Python-only pending EA parity.
+
 ## 1.3.1 — 2026-09-08
 
 - Redesigned Streamlit as a dark research workspace with responsive summary
