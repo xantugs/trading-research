@@ -5,6 +5,7 @@ import hashlib
 import html
 import json
 import os
+import re
 from dataclasses import replace
 from pathlib import Path
 from uuid import uuid4
@@ -19,6 +20,7 @@ from orb.config import load_params
 
 ROOT = Path(__file__).resolve().parent
 DATA_DIR = ROOT / "data"
+EA_PATH = ROOT / "mt5" / "ORB_Backtest.mq5"
 TEAL, RED, BLUE = "#42d9bd", "#ff8296", "#78aaff"
 SURFACE, INK, MUTED, GRID = "#101a29", "#e6edf7", "#99abc1", "#243247"
 COLORS = [TEAL, BLUE, "#c7a1ff", "#ffc979", "#ff8296", "#7fd6ed", "#c6d679", "#e9aece"]
@@ -540,6 +542,139 @@ def diagnostics_view(record):
         st.json(result.params.to_dict())
 
 
+def mt5_parity_issues(p: Params) -> list[str]:
+    """Selected Python rules that the checked-in EA does not yet implement."""
+    issues = []
+    if p.range_mode != "signal_bar":
+        issues.append("Forecast range construction")
+    if p.confirmation_bars != 1:
+        issues.append("Multiple confirmation candles")
+    if p.confirmation_same_color:
+        issues.append("Matching confirmation-candle colour")
+    if p.max_range_lookback_ratio > 0:
+        issues.append("Range / prior-window rejection")
+    if p.filter_ma_min_slope_pct > 0:
+        issues.append("Minimum MA-slope rejection")
+    return issues
+
+
+def mt5_input_frame(p: Params, tf: int) -> pd.DataFrame:
+    """Translate the active Python setup into the corresponding EA inputs."""
+    tf_name = {60: "PERIOD_H1", 240: "PERIOD_H4", 1440: "PERIOD_D1"}.get(tf, f"PERIOD_M{tf}")
+    filter_tf = {60: "PERIOD_H1", 240: "PERIOD_H4", 1440: "PERIOD_D1"}.get(
+        p.filter_tf_minutes, f"PERIOD_M{p.filter_tf_minutes}")
+    direction = {"both": "DIR_BOTH", "long": "DIR_LONG_ONLY", "short": "DIR_SHORT_ONLY"}[p.direction]
+    entry = {"close": "ENTRY_CLOSE_CONFIRM", "immediate": "ENTRY_IMMEDIATE"}[p.entry_mode]
+    close_hour, close_minute = (22, 45)
+    if p.eod_close:
+        close_hour, close_minute = map(int, p.eod_close.split(":"))
+    values = [
+        ("Signal timeframe", "InpTimeframe", tf_name),
+        ("Range time", "InpOrbHour / InpOrbMinute", f"HOUR_{p.orb_hour:02d} / {p.orb_minute}"),
+        ("Entry cutoff", "InpCutoffHour", f"HOUR_{p.cutoff_hour:02d}"),
+        ("Entry mode", "InpEntryMode", entry),
+        ("Direction", "InpDirection", direction),
+        ("Target", "InpTpRatio", f"{p.tp_ratio:g}"),
+        ("Initial stop", "InpSlRatio", f"{0.5 if p.stop_mode == 'midpoint' else p.sl_ratio:g}"),
+        ("Risk", "InpRiskPercent", f"{p.risk_pct:g}"),
+        ("End-of-day close", "InpCloseEod", str(p.eod_close is not None).lower()),
+        ("Close time", "InpCloseHour / InpCloseMinute", f"HOUR_{close_hour:02d} / {close_minute}"),
+        ("Daily ATR period", "InpAtrPeriod", str(p.atr_period)),
+        ("Minimum range / ATR", "InpMinRangeAtr", f"{p.min_range_atr:g}"),
+        ("Maximum range / ATR", "InpMaxRangeAtr", f"{p.max_range_atr:g}"),
+        ("Volume lookback", "InpVolumeLookback", str(p.vol_lookback)),
+        ("Volume threshold", "InpVolumeSpikeMin", f"{p.vol_spike_min:g}"),
+        ("Skip weak volume", "InpSkipNoSpike", str(p.vol_spike_min > 0).lower()),
+        ("Trend MA period", "InpFilterMaPeriod", str(p.filter_ma_period)),
+        ("Trend timeframe", "InpFilterTF", filter_tf),
+        ("Trend MA method", "InpFilterMaMethod", f"MODE_{p.filter_ma_method.upper()}"),
+        ("Breakeven trigger", "InpBreakEvenAtR", f"{p.breakeven_at_r:g}"),
+        ("Breakeven lock", "InpBreakEvenLockR", f"{p.breakeven_lock_r:g}"),
+        ("Trailing trigger", "InpTrailStartR", f"{p.trail_start_r:g}"),
+        ("Trailing distance", "InpTrailDistR", f"{p.trail_dist_r:g}"),
+        ("Trailing step", "InpTrailStepR", f"{p.trail_step_r:g}"),
+    ]
+    return pd.DataFrame(values, columns=["Rule", "MT5 input", "Value"])
+
+
+def _mql_function(source: str, signature: str) -> str:
+    start = source.find(signature)
+    if start < 0:
+        return ""
+    opening = source.find("{", start)
+    depth = 0
+    for index in range(opening, len(source)):
+        if source[index] == "{":
+            depth += 1
+        elif source[index] == "}":
+            depth -= 1
+            if depth == 0:
+                return source[start:index + 1]
+    return source[start:]
+
+
+def algorithm_view(record):
+    p, tf = record["result"].params, record["tf"]
+    source = EA_PATH.read_text(encoding="utf-8")
+    version_match = re.search(r'#property\s+version\s+"([^"]+)"', source)
+    version = version_match.group(1) if version_match else "unknown"
+    issues = mt5_parity_issues(p)
+
+    st.subheader("The algorithm, close to the code")
+    st.caption("This is the checked-in MetaTrader 5 Expert Advisor—not pseudocode. Edit the source, compile it, and reconcile it with Python.")
+    a, b, c = st.columns(3)
+    a.metric("EA source", f"v{version}")
+    b.metric("Selected setup", "MT5-ready" if not issues else "Parity needed")
+    compile_log = EA_PATH.with_name("compile.log")
+    compile_text = compile_log.read_text(encoding="utf-8", errors="replace") if compile_log.exists() else ""
+    compile_match = re.search(r"Result:\s*(\d+) errors?,\s*(\d+) warnings?", compile_text)
+    c.metric("Latest local compile", (f"{compile_match.group(1)} errors · {compile_match.group(2)} warnings"
+                                      if compile_match else "Run F7 locally"))
+
+    range_rule = {
+        "signal_bar": "the observed opening candle high and low",
+        "historical_percentile": "a prior-session opening-range percentile forecast",
+        "historical_percentile_premarket": "a historical forecast adjusted by premarket volatility",
+    }[p.range_mode]
+    confirmation = ("the first price crossing" if p.entry_mode == "immediate" else
+                    f"{p.confirmation_bars} closing candle{'s' if p.confirmation_bars != 1 else ''}")
+    stop = "the range midpoint" if p.stop_mode == "midpoint" else f"{p.sl_ratio:g}× the range"
+    st.markdown(
+        f"1. At **{p.orb_hour:02d}:{p.orb_minute:02d}**, define the range from **{range_rule}**.\n"
+        f"2. Before **{p.cutoff_hour:02d}:00**, accept **{confirmation}** outside it.\n"
+        f"3. Take the **first confirmed breakout only** for the day; direction is **{p.direction}**.\n"
+        f"4. Place the initial stop at **{stop}** and the target at **{p.tp_ratio:g}R**.\n"
+        f"5. Size the position to **{p.risk_pct:g}%** of equity."
+    )
+
+    if issues:
+        st.warning("This selected setup is not fully represented by EA v" + version + ": " + ", ".join(issues) + ".")
+    else:
+        st.success("The selected rules have MT5 EA parity. The source still needs compiling in your terminal and broker testing before use.")
+
+    with st.expander("MT5 inputs for this setup", expanded=True):
+        st.dataframe(mt5_input_frame(p, tf), hide_index=True, width="stretch")
+        if p.stop_mode == "midpoint":
+            st.caption("The EA expresses a midpoint stop as InpSlRatio = 0.5; the resulting price is identical.")
+
+    view = st.radio("Code view", ["Trading logic", "Inputs", "Complete EA"], horizontal=True,
+                    key="algorithm_code_view")
+    if view == "Inputs":
+        shown = source[source.find('input group "Timing'):source.find("//+------------------------------------------------------------------+\n//| One open trade")]
+    elif view == "Trading logic":
+        names = ["void OnNewBar()", "void CheckImmediateBreakout()",
+                 "void HandleSignal(const int direction, const double refPrice)",
+                 "void OpenBreakout(const int direction)", "void TryCaptureOrb(const MqlRates &bar)",
+                 "void ResetOnNewDay(const datetime barTime)"]
+        shown = "\n\n".join(filter(None, (_mql_function(source, name) for name in names)))
+    else:
+        shown = source
+    st.code(shown, language="cpp", line_numbers=view == "Complete EA", wrap_lines=False, height=720)
+    st.download_button("Download ORB_Backtest.mq5", source, "ORB_Backtest.mq5", "text/plain",
+                       width="stretch")
+    st.caption("Install under MQL5/Experts, press F7 in MetaEditor, then use Every tick based on real ticks in Strategy Tester.")
+
+
 def main():
     st.set_page_config(page_title="ORB Lab · Research workspace", page_icon="↗", layout="wide")
     st.markdown(CSS, unsafe_allow_html=True)
@@ -623,7 +758,7 @@ def main():
         st.download_button("Export settings", json.dumps(p.to_dict(), indent=2), "orb_settings.json", "application/json", width="stretch")
     st.caption(f'{len(st.session_state.experiments)}/8 runs saved for this browser session. '
                "Settings exports contain the last executed setup.")
-    tabs = st.tabs(["Overview", "Trades", "Compare", "Diagnostics"])
+    tabs = st.tabs(["Overview", "Trades", "Compare", "Algorithm", "Diagnostics"])
     with tabs[0]:
         overview(last)
     with tabs[1]:
@@ -631,6 +766,8 @@ def main():
     with tabs[2]:
         compare_view()
     with tabs[3]:
+        algorithm_view(last)
+    with tabs[4]:
         diagnostics_view(last)
 
 

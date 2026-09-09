@@ -9,6 +9,8 @@
   prior-window range-ratio rejection and a lagged normalized EMA/SMA slope veto.
 - Changed daily trade state to accept only the first confirmed breakout,
   regardless of direction, in both Python and the MT5 EA.
+- Added an Algorithm workspace tab with active-rule explanations, MT5 parity
+  checks, translated EA inputs, focused/full MQL5 views and source download.
 - Exposed the new rules in the dark Streamlit workspace and added a documented
   `configs/discussion.json` research starting point.
 - Made the forecast-range multiplier a fine-grained free numeric input and added

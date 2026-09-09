@@ -21,11 +21,14 @@ def button(app, label):
 
 def test_app_load_and_backtest(app):
     assert not app.exception
-    assert [tab.label for tab in app.tabs] == ["Overview", "Trades", "Compare", "Diagnostics"]
-    assert len(app.metric) == 4
+    assert [tab.label for tab in app.tabs] == ["Overview", "Trades", "Compare", "Algorithm", "Diagnostics"]
+    labels = {metric.label for metric in app.metric}
+    assert {"Net return", "Win rate", "Average R", "Max drawdown"} <= labels
+    assert {"EA source", "Selected setup", "Latest local compile"} <= labels
     button(app, "Run backtest").click().run(timeout=30)
     assert not app.exception
-    assert len(app.metric) == 4
+    assert {"Net return", "Win rate", "Average R", "Max drawdown"} <= {
+        metric.label for metric in app.metric}
 
 
 def test_pending_settings_and_saved_snapshots(app):
@@ -66,3 +69,14 @@ def test_auto_run_and_explorer_filters(app):
     direction.set_value(["short"]).run(timeout=30)
     assert not app.exception
     assert app.session_state["active_run"]["id"] == run_id
+
+
+def test_algorithm_tab_reports_selected_mt5_parity(app):
+    readiness = next(metric for metric in app.metric if metric.label == "Selected setup")
+    assert readiness.value == "MT5-ready"
+    app.selectbox(key="preset").select("Historical range").run(timeout=30)
+    button(app, "Run backtest").click().run(timeout=30)
+    assert not app.exception
+    readiness = next(metric for metric in app.metric if metric.label == "Selected setup")
+    assert readiness.value == "Parity needed"
+    assert any("Forecast range construction" in item.value for item in app.warning)

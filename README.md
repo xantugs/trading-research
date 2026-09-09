@@ -56,6 +56,8 @@ automatic recalculation. Pending changes are labeled until executed.
   entry, initial stop, target and exit markers.
 - **Compare:** name and save up to eight runs, then overlay normalized returns
   by calendar time or closed-trade number and compare their assumptions.
+- **Algorithm:** read the active rules beside the real MQL5 source, inspect the
+  matching MT5 inputs, see any parity gaps, and download the compilable EA.
 - **Diagnostics:** inspect opening-range volume, daily flags and exact settings.
 
 Explorer filters leave the full-run metrics unchanged. **Save run** and

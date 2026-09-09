@@ -13,8 +13,9 @@ Both forecasts use only information available before today's opening candle.
 
 Close mode can require N consecutive signal candles beyond the range. An
 optional colour rule also requires green candles for a long or red candles for
-a short. The close immediately before the sequence must be inside the range,
-so a breakout that reverses inside before completing confirmation is rejected.
+a short. The close immediately before the sequence must not already be beyond
+the relevant boundary, so a breakout that reverses before completing
+confirmation is rejected.
 Entry is the next signal bar's open, before cutoff. Immediate mode checks
 path-bar highs/lows and does not use multi-candle confirmation. A forecast range
 can trade from the selected opening time; the observed range cannot trade until

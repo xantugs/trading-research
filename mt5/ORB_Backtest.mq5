@@ -7,9 +7,10 @@
 //  ------------
 //  1. Waits for one specific candle each day (the "opening range" candle,
 //     e.g. the 09:30 New York open on M15) and records its high and low.
-//  2. Trades the FIRST breakout in each direction before a cutoff hour:
+//  2. Trades the FIRST confirmed breakout of the day before a cutoff hour:
 //       - close-confirmation mode: a candle must CLOSE outside the range
-//         (previous candle closed inside), entry at the next candle's open
+//         (previous candle was not already beyond that boundary), then enters
+//         at the next candle's open
 //       - immediate mode: entry as soon as price crosses the range
 //  3. Long SL = range high - range x SL ratio; short SL = range low +
 //     range x SL ratio. Take-profit = initial risk x TP ratio.
@@ -386,7 +387,7 @@ void OnNewBar()
    if(!IsBeforeCutoff(g_lastBarTime))
       return;
 
-//--- breakout = previous bar closed inside (or on) the range, last bar closed outside.
+//--- breakout = previous bar was not beyond this boundary, last bar closed outside.
 //    Using the previous CLOSE rather than the last bar's OPEN also catches gap breakouts.
    if(!g_tradeTaken && DirectionAllowed(1) && prev.close <= g_orbHigh && last.close > g_orbHigh)
       HandleSignal(1, last.close);

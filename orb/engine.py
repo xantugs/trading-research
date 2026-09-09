@@ -4,9 +4,9 @@ The rules are the EA's rules, expressed on bar data:
 
 * One opening-range candle per server-time day (hour:minute on the signal
   timeframe).  Its high/low are the range.
-* Close-confirmation entry: the previous signal bar closed inside (or on) the
-  range and the last one closed outside -> market entry at the NEXT bar's open
-  (ask for longs = bid + spread, bid for shorts).
+* Close-confirmation entry: the previous signal bar had not already closed
+  beyond the relevant boundary and the last one closed outside -> market entry
+  at the NEXT bar's open (ask for longs = bid + spread, bid for shorts).
 * Immediate entry: the first path bar whose ask trades above the range high
   (or bid below the low) -> entry at max(open ask, high + point).
 * First confirmed breakout of the day only, regardless of direction. A signal
