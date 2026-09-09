@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.5.0 — 2026-09-09
+## 1.5.0 — 2026-09-10
 
 - Added a decision-event ledger, daily-lock and rejected-signal chart markers,
   MFE/MAE trade diagnostics and an exported `events.csv` audit trail.
@@ -15,6 +15,12 @@
   daily-lock restart persistence, range recovery, and fill-slippage logging.
 - Added a canonical rule contract and expanded EA-header reconciliation for all
   new strategy and execution settings.
+- Added a QQQ equity profile with recorded TAQ spread, whole-share commission,
+  actual-risk diagnostics and a dynamic gross-notional cap.
+- Flagged every unresolved same-bar SL/TP touch for later quote replay, and
+  preserved TAQ nanoseconds plus the explicit +7-hour overlay conversion.
+- Added Parquet transfer verification, yearly-tar runbook and WRDS job scripts
+  for the completed 2018–2022 raw QQQ archive.
 
 ## 1.4.0 — 2026-09-09
 

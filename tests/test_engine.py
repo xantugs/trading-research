@@ -136,6 +136,9 @@ def test_same_bar_rule():
     optimistic = run_backtest(bars(rows), base_params(same_bar_rule="tp_first"))
     assert conservative.trades.iloc[0]["reason"] == "SL"
     assert optimistic.trades.iloc[0]["reason"] == "TP"
+    assert conservative.trades.iloc[0]["same_bar_ambiguous"]
+    assert optimistic.trades.iloc[0]["ambiguous_bar_time"] == pd.Timestamp("2025-05-06 17:00")
+    assert "same_bar_ambiguous" in set(conservative.events.event)
 
 
 def test_gap_through_stop_fills_at_open():
@@ -493,6 +496,43 @@ def test_same_bar_exit_updates_balance_before_later_entry():
     trades, balance = _simulate_money(frame, Params(initial_balance=1000, risk_pct=10), '2025-01-01')
     assert list(trades.lots) == [10., 11.]
     assert balance.iloc[-1] == 990.
+
+
+def test_cash_equity_sizing_caps_notional_and_reports_actual_risk():
+    from orb.engine import _simulate_money
+    frame = pd.DataFrame([{
+        "entry_time": pd.Timestamp("2025-01-01 17:00"),
+        "exit_time": pd.Timestamp("2025-01-01 17:15"),
+        "entry": 100.0, "exit": 101.0, "dir": 1, "risk_dist": 1.0,
+    }])
+    params = Params(initial_balance=1000, risk_pct=10, point_value=1,
+                    lot_step=1, min_lot=1, max_lot=100000,
+                    max_gross_leverage=1, commission_per_lot=.005)
+    trades, balance = _simulate_money(frame, params, "2025-01-01")
+    trade = trades.iloc[0]
+    assert trade.lots == 10
+    assert trade.notional == pytest.approx(1000)
+    assert trade.gross_leverage == pytest.approx(1)
+    assert trade.risk_budget == pytest.approx(100)
+    assert trade.actual_risk_money == pytest.approx(10)
+    assert trade.actual_risk_pct == pytest.approx(1)
+    assert trade.profit == pytest.approx(9.90)
+    assert balance.iloc[-1] == pytest.approx(1009.90)
+
+
+def test_cap_does_not_force_an_unaffordable_minimum_share():
+    from orb.engine import _simulate_money
+    frame = pd.DataFrame([{
+        "entry_time": pd.Timestamp("2025-01-01 17:00"),
+        "exit_time": pd.Timestamp("2025-01-01 17:15"),
+        "entry": 100.0, "exit": 101.0, "dir": 1, "risk_dist": 1.0,
+    }])
+    trades, balance = _simulate_money(
+        frame, Params(initial_balance=50, risk_pct=10, lot_step=1, min_lot=1,
+                      max_lot=1000, max_gross_leverage=1), "2025-01-01")
+    assert trades.iloc[0].lots == 0
+    assert trades.iloc[0].profit == 0
+    assert balance.iloc[-1] == 50
 
 
 def test_immediate_entry_does_not_fill_stop_at_pre_entry_open():

@@ -8,7 +8,7 @@ Streamlit 1.63.0, Plotly 6.9.0. The exact installed dependency snapshot is
 
 - `python run_all.py --check --compile-mt5 --no-app` completed its setup,
   compilation, lint, tests, 120-day demo and report pipeline.
-- **106 pytest cases passed**, including engine rules, decision events, MFE/MAE,
+- **116 pytest cases passed**, including engine rules, decision events, MFE/MAE,
   tick loading, clock/data validation, BI5, cache/retry, strict reconciliation,
   report, app and launcher cases.
 - `python -m ruff check .`: all checks passed.
@@ -29,6 +29,19 @@ Synthetic baseline reproducibility (120 days, seed 42, baseline.json):
 closed balance 8541.4721 from 10000. These are fixture results, not strategy
 performance evidence. Reports are local under `outputs/`.
 
+QQQ M1 smoke test (2012 local file, observed-range QQQ profile): 112,430 rows,
+250 complete opening ranges, 240 trades, +11.7198 gross R, +2.0826%
+closed-balance return and 7.5219% closed-balance drawdown. The 1× cash cap held
+maximum gross exposure to 1.0× and reduced mean actual risk to 0.5095%. No M1
+exit bar touched both SL and TP. This is a software/data-behavior check, not
+evidence of an edge. The local file starts at 08:30 New York; as expected, the
+two-hour discussion filter rejects it for insufficient history.
+
+The installed MT5 symbol catalogue contains `QQQ` with exchange-stock contract
+mode, contract size 1 and whole-share volume steps. Its trade mode is disabled
+and it has no current quote on this account, so native broker testing is not yet
+available despite the symbol name being present.
+
 ## Pending or unavailable
 
 - Dukascopy live-feed verification: a two-day request for
@@ -41,9 +54,9 @@ performance evidence. Reports are local under `outputs/`.
 - Real broker EA/Python trade reconciliation.
 - GitHub-hosted Windows/Linux/Python matrix: configured but not yet run on
   GitHub. Only the local Windows/Python 3.13 environment is verified here.
-- Full 2018–2022 raw WRDS TAQ tick transfer and local file verification.
-  Cloud-side M1 aggregation and a short raw quote/trade extraction are verified;
-  provider data remains outside Git.
+- Full local verification of the 2018–2022 WRDS TAQ tick transfer. Cloud output
+  is complete at 2,518 Parquet files / 60 manifests; the parallel yearly-tar
+  download is still in flight. Provider data remains outside Git.
 
 ## Dependency replay
 

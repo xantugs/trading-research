@@ -102,8 +102,8 @@ def load_file(source: str | bytes, signature: str) -> pd.DataFrame:
 
 
 @st.cache_data(show_spinner=False)
-def load_tick_file(source: bytes, name: str, signature: str) -> pd.DataFrame:
-    return load_ticks(source, name)
+def load_tick_file(source: bytes, name: str, signature: str, strategy_offset_hours: int) -> pd.DataFrame:
+    return load_ticks(source, name, strategy_offset_hours=strategy_offset_hours)
 
 
 def style(fig: go.Figure, height=310, ytitle="", legend=False) -> go.Figure:
@@ -300,9 +300,12 @@ def sidebar():
             number("Lot step", "lot_step", minimum=0.00001, step=0.01, fmt="%.5f")
             number("Minimum lot", "min_lot", minimum=0.00001, step=0.01, fmt="%.5f")
             number("Maximum lot", "max_lot", minimum=0.00001, step=1.0)
+            number("Maximum gross leverage", "max_gross_leverage", minimum=0.0, step=0.25,
+                   help="Gross position notional divided by equity. Zero disables the capital cap.")
             st.selectbox("If SL and TP touch in one bar", ["sl_first", "tp_first"], key="p_same_bar_rule",
                          format_func=lambda v: "Stop first (conservative)" if v == "sl_first" else "Target first (optimistic)")
-            st.caption("Minimum lot clamping can exceed the requested risk. Margin and financing are not modeled.")
+            st.caption("A positive leverage cap prevents minimum-lot clamping from exceeding available capital. "
+                       "Broker margin, financing and per-order commission minimums are not modeled.")
         st.divider()
         st.caption("Python bar simulation · EA v1.40\n\nResearch results need broker reconciliation.")
     values = {field: st.session_state[f"p_{field}"] for field in Params().to_dict()}
@@ -479,7 +482,8 @@ def trades_view(record):
     subset = filtered_trades(trades, directions, reasons, dates)
     st.caption(f"{len(subset)} of {len(trades)} trades shown")
     columns = ["entry_time", "direction", "range_mode", "orb_range", "entry", "sl", "tp",
-               "exit_time", "exit", "reason", "r", "mfe_r", "mae_r", "lots", "profit"]
+               "exit_time", "exit", "reason", "r", "mfe_r", "mae_r", "lots",
+               "actual_risk_pct", "gross_leverage", "same_bar_ambiguous", "profit"]
     st.dataframe(subset[columns], hide_index=True, width="stretch", height=300,
                  column_config={"r": st.column_config.NumberColumn("Gross R", format="%.2f"),
                                 "profit": st.column_config.NumberColumn("Net P/L", format="%.2f"),
@@ -492,6 +496,9 @@ def trades_view(record):
                                 "tp": st.column_config.NumberColumn("Target", format="%.2f"),
                                 "exit": st.column_config.NumberColumn("Exit", format="%.2f"),
                                 "lots": st.column_config.NumberColumn("Lots", format="%.3f"),
+                                "actual_risk_pct": st.column_config.NumberColumn("Actual risk · %", format="%.2f"),
+                                "gross_leverage": st.column_config.NumberColumn("Gross exposure · ×", format="%.2f"),
+                                "same_bar_ambiguous": "SL/TP ambiguity",
                                 "direction": "Side", "reason": "Exit reason"})
     st.download_button("Export filtered trades", subset.to_csv(index=False), "orb_filtered_trades.csv", "text/csv")
     if subset.empty:
@@ -507,7 +514,8 @@ def trades_view(record):
         trade = subset.loc[selected]
         st.caption(f"{trade.range_mode} · width {trade.orb_range:,.3f} · "
                    f"bounds {trade.orb_low:,.2f}–{trade.orb_high:,.2f} · "
-                   f"Initial risk {trade.risk_dist:,.2f} · {trade.lots:g} lots · Net P/L {trade.profit:+,.2f}")
+                   f"Initial risk {trade.risk_dist:,.2f} · {trade.lots:g} lots · "
+                   f"{trade.gross_leverage:.2f}× gross exposure · Net P/L {trade.profit:+,.2f}")
         controls = st.columns([1, 1])
         context = controls[0].select_slider(
             "Chart context",
@@ -530,11 +538,19 @@ def trades_view(record):
         ticks = None
         if tick_upload is not None:
             try:
+                tick_clock = st.radio(
+                    "Tick timestamp clock",
+                    ["WRDS New York → strategy (+7h)", "Already in strategy clock"],
+                    horizontal=True, key="tick_clock_" + record["id"],
+                    help="WRDS TAQ stores New York wall time; project QQQ bars add seven hours.",
+                )
+                tick_offset = 7 if tick_clock.startswith("WRDS") else 0
                 tick_bytes = tick_upload.getvalue()
                 tick_signature = hashlib.sha256(tick_bytes).hexdigest()
-                ticks = load_tick_file(tick_bytes, tick_upload.name, tick_signature)
+                ticks = load_tick_file(tick_bytes, tick_upload.name, tick_signature, tick_offset)
                 quality = tick_quality(ticks)
                 st.caption(f"Tick overlay: {quality['rows']:,} rows · {quality['first']} to {quality['last']} · "
+                           f"{quality['dropped_timestamps']:,} bad timestamps dropped · "
                            f"{quality['invalid_prices']:,} invalid prices · {quality['crossed_quotes']:,} crossed quotes")
             except (ValueError, OSError, KeyError) as exc:
                 st.error(f"Cannot load tick overlay: {exc}")
@@ -625,7 +641,7 @@ def diagnostics_view(record):
     st.markdown(
         "- Gross R excludes commission; money profit includes it.\n"
         "- Balance drawdown excludes unrealized intratrade losses.\n"
-        "- Minimum lots can exceed the requested risk. No margin, financing or slippage model.\n"
+        "- Actual risk and gross exposure reflect lot rounding and any notional cap; broker margin is separate.\n"
         "- Immediate entries and stop management approximate tick ordering on bars.\n"
         "- END exits mark an unresolved trade at the last available close."
     )
@@ -860,7 +876,8 @@ def mt5_input_frame(p: Params, tf: int) -> pd.DataFrame:
         ("Trailing trigger", "InpTrailStartR", f"{p.trail_start_r:g}"),
         ("Trailing distance", "InpTrailDistR", f"{p.trail_dist_r:g}"),
         ("Trailing step", "InpTrailStepR", f"{p.trail_step_r:g}"),
-        ("Maximum spread", "InpMaxSpreadPoints", f"{p.max_spread / p.point:g}" if p.point else "0"),
+        ("Maximum spread", "InpMaxSpreadPoints",
+         (f"{p.max_spread:g} price units ÷ broker _Point" if p.max_spread else "0 (disabled)")),
         ("Minimum stop", "InpMinStopPoints", str(p.min_stop_points)),
         ("Allow live entries", "InpAllowLiveTrading", "false"),
     ]
@@ -914,7 +931,8 @@ def algorithm_view(record):
         f"2. Before **{p.cutoff_hour:02d}:00**, accept **{confirmation}** outside it.\n"
         f"3. Take the **first confirmed breakout only** for the day; direction is **{p.direction}**.\n"
         f"4. Place the initial stop at **{stop}** and the target at **{p.tp_ratio:g}R**.\n"
-        f"5. Size the position to **{p.risk_pct:g}%** of equity."
+        f"5. Size the position to **{p.risk_pct:g}%** of equity"
+        + (f", capped at **{p.max_gross_leverage:g}×** gross exposure." if p.max_gross_leverage else ".")
     )
 
     if issues:

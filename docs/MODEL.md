@@ -88,6 +88,11 @@ new entry price, floored to the lot step, then clamped to the EA's min/max behav
 **Clamping to the minimum may exceed the chosen risk percentage.** Spread-aware
 floating valuation and broker currency/margin rules are approximations.
 
+An optional gross-leverage cap constrains open notional to equity times the
+configured multiple. For QQQ, one lot is one share, `point_value=1`, and
+notional is `entry price × shares`. Actual risk and gross exposure are recorded
+per trade because a cash cap can prevent use of the full risk budget.
+
 Per-side commission is charged twice at exit; opening commission is therefore
 not deducted before sizing overlapping trades. Reported R is gross of costs.
 The balance curve is realized P/L, so maximum drawdown is closed-balance

@@ -88,7 +88,8 @@ def save_result(result: Result, output: Path, source: dict, quality: dict) -> Pa
             "Research simulation; local EA compilation passes, but broker smoke testing and reconciliation are pending.",
             "Balance drawdown excludes unrealized intratrade drawdown.",
             "R statistics are gross of commission; money profit includes per-side commission at exit.",
-            "No margin, slippage, financing, currency conversion or netting-account model.",
+            "Optional gross-notional capping is not a broker margin model; slippage, financing, "
+            "currency conversion and netting-account behavior are not modeled.",
             "Minimum lot follows the EA clamping behavior and can exceed requested risk.",
             "Immediate entries and stop management have unknown intrabar ordering.",
             "END exits mark still-open trades at the last available close.",

@@ -25,7 +25,7 @@ ROOT = Path(__file__).resolve().parents[1]
     {"range_multiplier": 0}, {"range_history_sessions": 0}, {"range_percentile": 101},
     {"premarket_window_minutes": 0}, {"premarket_sensitivity": -1}, {"confirmation_bars": 0},
     {"filter_ma_period": 0, "filter_ma_slope_bars": 2, "filter_ma_min_slope_pct": 0.1},
-    {"max_spread": -1}, {"min_stop_points": -1},
+    {"max_spread": -1}, {"min_stop_points": -1}, {"max_gross_leverage": -1},
 ])
 def test_parameter_validation(change):
     with pytest.raises(ValueError):
@@ -119,6 +119,44 @@ def test_auto_source_with_explicit_bars_becomes_csv():
 def test_wrds_source_defaults_to_qqq():
     args = parse_args(["--source", "wrds", "--bars", "data/wrds/years"])
     assert args.symbol == "QQQ"
+    assert args.config == ROOT / "configs/qqq.json"
+
+
+def test_qqq_config_uses_equity_and_recorded_spread_semantics():
+    params = load_params(ROOT / "configs/qqq.json")
+    params.validate(15)
+    assert params.use_data_spread is True and params.spread == 0
+    assert params.point == pytest.approx(0.01) and params.point_value == 1
+    assert params.lot_step == 1 and params.min_lot == 1
+    assert params.max_gross_leverage == 1
+
+
+def test_recorded_spread_mode_rejects_an_all_zero_input(tmp_path):
+    bars = tmp_path / "ZERO_SPREAD_M1.csv"
+    make_synthetic_m1(days=3, seed=42).assign(spread=0).to_csv(bars)
+    result = subprocess.run(
+        [sys.executable, str(ROOT / "run_all.py"), "--no-install", "--no-app",
+         "--source", "csv", "--bars", str(bars), "--config", str(ROOT / "configs/qqq.json")],
+        cwd=tmp_path, text=True, capture_output=True, timeout=60,
+    )
+    assert result.returncode == 1
+    assert "no positive recorded spreads" in result.stderr
+
+
+def test_wrds_manifest_symbol_mismatch_is_rejected(tmp_path):
+    bars = tmp_path / "QQQ_2025_M1.csv.gz"
+    make_synthetic_m1(days=3, seed=42).to_csv(bars, compression="gzip")
+    (tmp_path / "manifest.json").write_text(json.dumps({
+        "symbol": "SPY", "file": bars.name,
+        "strategy_clock": "New York wall time + 7 hours", "point": 0.01,
+    }))
+    result = subprocess.run(
+        [sys.executable, str(ROOT / "run_all.py"), "--no-install", "--no-app", "--data-only",
+         "--source", "wrds", "--bars", str(bars)],
+        cwd=tmp_path, text=True, capture_output=True, timeout=60,
+    )
+    assert result.returncode == 1
+    assert "manifest symbol mismatch" in result.stderr
 
 
 def test_data_only_prepares_local_bars_without_report(tmp_path):

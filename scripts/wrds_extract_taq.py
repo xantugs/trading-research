@@ -2,8 +2,8 @@
 """Extract a small TAQ subset while running on WRDS Cloud.
 
 This file is uploaded to a user's WRDS home directory, submitted through qsub,
-and writes compressed CSV files that can then be retrieved with SFTP. It never
-stores or accepts a WRDS password.
+and writes zstd Parquet (or gzip CSV) files for later transfer. It never stores
+or accepts a WRDS password.
 """
 from __future__ import annotations
 
@@ -65,36 +65,95 @@ def available_tables(db, candidates: tuple[str, ...]) -> set[str]:
     return set(frame["table_name"].astype(str))
 
 
+def write_parquet(chunks, destination: Path, compression_level: int) -> int:
+    """Stream DataFrame chunks into one zstd Parquet file with a stable schema."""
+    try:
+        import pyarrow as pa
+        import pyarrow.parquet as pq
+    except ImportError as exc:  # pragma: no cover - depends on the compute node
+        raise SystemExit(
+            "pyarrow is required for --format parquet on this node; rerun with --format csv"
+        ) from exc
+
+    count = 0
+    writer = None
+    try:
+        for chunk in chunks:
+            if chunk.empty:
+                continue
+            arrow = pa.Table.from_pandas(chunk, preserve_index=False)
+            if writer is None:
+                writer = pq.ParquetWriter(destination, arrow.schema, compression="zstd",
+                                          compression_level=compression_level)
+            else:
+                # Later chunks can infer a wider/narrower dtype (an all-null column,
+                # say); cast to the first chunk's schema so the file stays readable.
+                arrow = arrow.cast(writer.schema)
+            writer.write_table(arrow)
+            count += len(chunk)
+    finally:
+        if writer is not None:
+            writer.close()
+    return count
+
+
+def write_csv_gz(chunks, destination: Path) -> int:
+    count = 0
+    wrote_header = False
+    with gzip.open(destination, "wt", encoding="utf-8", newline="") as handle:
+        for chunk in chunks:
+            chunk.to_csv(handle, index=False, header=not wrote_header)
+            wrote_header = True
+            count += len(chunk)
+    return count
+
+
 def export_table(db, table: str, symbol: str, start_time: str, end_time: str,
-                 destination: Path, chunk_size: int) -> int:
+                 destination: Path, chunk_size: int, fmt: str = "parquet",
+                 compression_level: int = 9) -> int:
+    columns = db.raw_sql(
+        """
+        select column_name from information_schema.columns
+        where table_schema = 'taqmsec' and table_name = %(table)s
+        """,
+        params={"table": table},
+    )["column_name"].astype(str).tolist()
+    order = ["time_m"]
+    if "time_m_nano" in columns:
+        order.append("time_m_nano")
+    sequence = next((name for name in ("tr_seqnum", "qu_seqnum", "seqnum") if name in columns), None)
+    if sequence:
+        order.append(sequence)
+    end_clause = "" if end_time == "24:00:00" else "and time_m < cast(%(end_time)s as time)"
     sql = f"""
         select *
         from taqmsec.{table}
         where sym_root = %(symbol)s
           and coalesce(sym_suffix, '') = ''
           and time_m >= cast(%(start_time)s as time)
-          and time_m < cast(%(end_time)s as time)
+          {end_clause}
+        order by {', '.join(order)}
     """
     count = 0
-    wrote_header = False
     try:
-        with gzip.open(destination, "wt", encoding="utf-8", newline="") as handle:
-            result = db.raw_sql(
-                sql,
-                params={"symbol": symbol, "start_time": start_time, "end_time": end_time},
-                chunksize=chunk_size,
-            )
-            # Current WRDS builds may ignore chunksize and return one DataFrame;
-            # older builds return an iterator of DataFrames.
-            chunks = (result,) if hasattr(result, "to_csv") else result
-            for chunk in chunks:
-                chunk.to_csv(handle, index=False, header=not wrote_header)
-                wrote_header = True
-                count += len(chunk)
+        result = db.raw_sql(
+            sql,
+            params={"symbol": symbol, "start_time": start_time, "end_time": end_time},
+            chunksize=chunk_size,
+        )
+        # Current WRDS builds may ignore chunksize and return one DataFrame;
+        # older builds return an iterator of DataFrames.
+        chunks = (result,) if hasattr(result, "to_csv") else result
+        if fmt == "csv":
+            count = write_csv_gz(chunks, destination)
+        else:
+            count = write_parquet(chunks, destination, compression_level)
     except Exception:
         destination.unlink(missing_ok=True)
         raise
-    if not wrote_header:
+    if count == 0:
+        # A header-only or empty artifact is misleading; the caller records the
+        # day under manifest "missing_tables" instead.
         destination.unlink(missing_ok=True)
     return count
 
@@ -111,6 +170,10 @@ def parse_args(argv=None):
     parser.add_argument("--output-dir", type=Path, default=Path("orb_exports"))
     parser.add_argument("--kind", choices=["trades", "quotes", "both"], default="both")
     parser.add_argument("--chunk-size", type=int, default=250_000)
+    parser.add_argument("--format", choices=["parquet", "csv"], default="parquet",
+                        help="parquet+zstd is roughly 3-4x smaller than gzip CSV for TAQ")
+    parser.add_argument("--compression-level", type=int, default=9,
+                        help="zstd level for --format parquet")
     args = parser.parse_args(argv)
     args.symbol = args.symbol.upper()
     if not SYMBOL_RE.fullmatch(args.symbol):
@@ -119,11 +182,16 @@ def parse_args(argv=None):
         parser.error("--to must be later than --from")
     if args.chunk_size < 1:
         parser.error("--chunk-size must be positive")
-    for value in (args.start_time, args.end_time):
+    for value in (args.start_time,):
         try:
             datetime.strptime(value, "%H:%M:%S")
         except ValueError:
             parser.error("times must use HH:MM:SS")
+    if args.end_time != "24:00:00":
+        try:
+            datetime.strptime(args.end_time, "%H:%M:%S")
+        except ValueError:
+            parser.error("--end-time must use HH:MM:SS or 24:00:00")
     return args
 
 
@@ -144,6 +212,8 @@ def main() -> int:
         "end_exclusive": args.end.isoformat(),
         "start_time": args.start_time,
         "end_time_exclusive": args.end_time,
+        "format": args.format,
+        "row_order": "time_m, time_m_nano and sequence number when available",
         "created_utc": datetime.now(timezone.utc).isoformat(),
         "wrds_user": getpass.getuser(),
         "files": [],
@@ -163,9 +233,11 @@ def main() -> int:
                 manifest["missing_tables"].append({"date": day.isoformat(), "kind": kind,
                                                     "tried": list(candidates)})
             else:
-                target = args.output_dir / f"{args.symbol}_{day.isoformat()}_{kind}.csv.gz"
+                extension = ".parquet" if args.format == "parquet" else ".csv.gz"
+                target = args.output_dir / f"{args.symbol}_{day.isoformat()}_{kind}{extension}"
                 rows = export_table(db, table, args.symbol, args.start_time, args.end_time,
-                                    target, args.chunk_size)
+                                    target, args.chunk_size, args.format,
+                                    args.compression_level)
                 if rows:
                     manifest["files"].append({"file": target.name, "table": table, "rows": rows})
                     total_rows += rows

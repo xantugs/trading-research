@@ -100,6 +100,7 @@ class Params:
     min_lot: float = 0.01
     max_lot: float = 100.0
     commission_per_lot: float = 0.0    # per side
+    max_gross_leverage: float = 0.0    # cap gross notional / equity; 0 = off
 
     def eod_minutes(self) -> Optional[int]:
         if self.eod_close is None:
@@ -178,7 +179,8 @@ class Params:
         for name in ("initial_balance", "point", "point_value", "lot_step", "min_lot", "max_lot"):
             if getattr(self, name) <= 0:
                 raise ValueError(f"{name} must be positive")
-        for name in ("spread", "max_spread", "min_stop_points", "commission_per_lot", "atr_period", "min_range_atr", "max_range_atr",
+        for name in ("spread", "max_spread", "min_stop_points", "commission_per_lot",
+                     "max_gross_leverage", "atr_period", "min_range_atr", "max_range_atr",
                      "vol_lookback", "vol_spike_min", "filter_ma_period", "filter_ma_slope_bars",
                      "filter_ma_min_slope_pct", "max_range_lookback_ratio",
                      "breakeven_at_r",
@@ -446,8 +448,8 @@ def run_backtest(bars: pd.DataFrame, params: Params, path: Optional[pd.DataFrame
                 return
             opening_quote = pth.o[path_start] + (_spread_at(pth, p, index=path_start) if direction > 0 else 0)
             intrabar_entry = p.entry_mode == "immediate" and abs(entry - opening_quote) > 1e-9
-            exit_time, exit_price, reason = _resolve_exit(pth, path_start, direction, entry, sl, tp, p, eod,
-                                                         intrabar_entry=intrabar_entry)
+            exit_time, exit_price, reason, ambiguous, ambiguous_time = _resolve_exit(
+                pth, path_start, direction, entry, sl, tp, p, eod, intrabar_entry=intrabar_entry)
             exit_index = min(int(np.searchsorted(pth.t, exit_time, side="right")) - 1, len(pth.t) - 1)
             mfe_r, mae_r = _excursions(pth, path_start, exit_index, direction, entry, risk, p)
             trades.append({
@@ -471,12 +473,17 @@ def run_backtest(bars: pd.DataFrame, params: Params, path: Optional[pd.DataFrame
                 "exit_time": pd.Timestamp(exit_time),
                 "exit": exit_price,
                 "reason": reason,
+                "same_bar_ambiguous": ambiguous,
+                "ambiguous_bar_time": pd.Timestamp(ambiguous_time) if ambiguous_time is not None else pd.NaT,
                 "r": (exit_price - entry) * direction / risk,
                 "mfe_r": mfe_r,
                 "mae_r": mae_r,
             })
             side = "long" if direction > 0 else "short"
             add_event(entry_time, "entry", f"Entered {side}; daily trade locked", side, entry, "accepted")
+            if ambiguous:
+                add_event(ambiguous_time, "same_bar_ambiguous",
+                          f"SL and TP touched; resolved with {p.same_bar_rule}", side, status="warning")
             add_event(exit_time, "exit", f"Exited by {reason}", side, exit_price, "accepted")
             rec["long" if direction > 0 else "short"] = reason
             rec["status"] = "traded"
@@ -562,8 +569,8 @@ def run_backtest(bars: pd.DataFrame, params: Params, path: Optional[pd.DataFrame
 
     trade_columns = ["date", "direction", "dir", "orb_time", "orb_high", "orb_low", "orb_range",
                      "range_mode", "range_lookback_ratio", "range_atr", "vol_ratio", "signal_time",
-                     "entry_time", "entry", "sl", "tp", "risk_dist", "exit_time", "exit", "reason", "r",
-                     "mfe_r", "mae_r"]
+                     "entry_time", "entry", "sl", "tp", "risk_dist", "exit_time", "exit", "reason",
+                     "same_bar_ambiguous", "ambiguous_bar_time", "r", "mfe_r", "mae_r"]
     trades_df = pd.DataFrame(trades, columns=trade_columns)
     days_df = pd.DataFrame(days)
     trades_df, equity = _simulate_money(trades_df, p, start_time=bars.index[0])
@@ -646,7 +653,7 @@ def _resolve_exit(pth: _Arrays, start: int, d: int, entry: float, sl: float, tp:
 
         # end-of-day close happens on the first tick at/after the close time
         if eod is not None and pth.tod[j] >= eod:
-            return pth.t[j], o, "EOD"
+            return pth.t[j], o, "EOD", False, None
 
         if d > 0:
             hit_sl, hit_tp = l <= sl_cur, h >= tp
@@ -666,16 +673,16 @@ def _resolve_exit(pth: _Arrays, start: int, d: int, entry: float, sl: float, tp:
             sl_px, tp_px = sl_cur, tp
         if hit_sl and hit_tp:
             if gap_sl and not gap_tp:
-                return pth.t[j], sl_px, "SL"
+                return pth.t[j], sl_px, "SL", False, None
             if gap_tp and not gap_sl:
-                return pth.t[j], tp_px, "TP"
+                return pth.t[j], tp_px, "TP", False, None
             if p.same_bar_rule == "tp_first":
-                return pth.t[j], tp_px, "TP"
-            return pth.t[j], sl_px, "SL"
+                return pth.t[j], tp_px, "TP", True, pth.t[j]
+            return pth.t[j], sl_px, "SL", True, pth.t[j]
         if hit_sl:
-            return pth.t[j], sl_px, "SL"
+            return pth.t[j], sl_px, "SL", False, None
         if hit_tp:
-            return pth.t[j], tp_px, "TP"
+            return pth.t[j], tp_px, "TP", False, None
 
         if manage:
             best = (h - entry) if d > 0 else (entry - l)      # best excursion in this bar
@@ -692,7 +699,7 @@ def _resolve_exit(pth: _Arrays, start: int, d: int, entry: float, sl: float, tp:
 
     # ran out of data: mark to the last close
     last_spread = _spread_at(pth, p, index=n - 1) if d < 0 else 0.0
-    return pth.t[n - 1], pth.c[n - 1] + last_spread, "END"
+    return pth.t[n - 1], pth.c[n - 1] + last_spread, "END", False, None
 
 
 class _TrendFilter:
@@ -750,7 +757,8 @@ def _simulate_money(trades: pd.DataFrame, p: Params, start_time) -> tuple[pd.Dat
     eq_times = [pd.Timestamp(start_time)]
     eq_values = [p.initial_balance]
     if trades.empty:
-        for col in ("lots", "profit", "balance"):
+        for col in ("lots", "risk_budget", "actual_risk_money", "actual_risk_pct",
+                    "notional", "gross_leverage", "profit", "balance"):
             trades[col] = pd.Series(dtype=float)
         return trades, pd.Series(eq_values, index=pd.DatetimeIndex(eq_times), name="balance")
 
@@ -766,6 +774,11 @@ def _simulate_money(trades: pd.DataFrame, p: Params, start_time) -> tuple[pd.Dat
     balance = p.initial_balance
     open_idx: set[int] = set()
     lots = np.zeros(len(trades))
+    risk_budget = np.zeros(len(trades))
+    actual_risk_money = np.zeros(len(trades))
+    actual_risk_pct = np.zeros(len(trades))
+    notional = np.zeros(len(trades))
+    gross_leverage = np.zeros(len(trades))
     profit = np.zeros(len(trades))
     balance_after = np.zeros(len(trades))
     entry = trades["entry"].values
@@ -778,11 +791,25 @@ def _simulate_money(trades: pd.DataFrame, p: Params, start_time) -> tuple[pd.Dat
             # equity = balance + floating P/L of open trades, marked at this trade's entry price
             floating = sum((entry[i] - entry[k]) * direction[k] * lots[k] * p.point_value for k in open_idx)
             equity = balance + floating
-            risk_money = equity * p.risk_pct / 100.0
+            risk_money = max(equity, 0.0) * p.risk_pct / 100.0
+            risk_budget[i] = risk_money
             size = risk_money / (risk_dist[i] * p.point_value) if risk_dist[i] > 0 else 0.0
+            if p.max_gross_leverage > 0:
+                gross_open = sum(abs(entry[i]) * lots[k] * p.point_value for k in open_idx)
+                available = max(equity * p.max_gross_leverage - gross_open, 0.0)
+                affordable = available / (abs(entry[i]) * p.point_value) if entry[i] else 0.0
+                size = min(size, affordable)
             size = np.floor(size / p.lot_step) * p.lot_step
-            size = min(max(size, p.min_lot), p.max_lot)
+            size = min(size, p.max_lot)
+            # A capital cap must never be defeated by minimum-lot clamping.
+            if size < p.min_lot:
+                size = 0.0 if p.max_gross_leverage > 0 else p.min_lot
             lots[i] = round(size, 8)
+            notional[i] = abs(entry[i]) * lots[i] * p.point_value
+            actual_risk_money[i] = risk_dist[i] * lots[i] * p.point_value
+            if equity > 0:
+                actual_risk_pct[i] = actual_risk_money[i] / equity * 100.0
+                gross_leverage[i] = notional[i] / equity
             open_idx.add(i)
         else:
             pnl = (exit_px[i] - entry[i]) * direction[i] * lots[i] * p.point_value
@@ -795,6 +822,11 @@ def _simulate_money(trades: pd.DataFrame, p: Params, start_time) -> tuple[pd.Dat
             eq_values.append(balance)
 
     trades["lots"] = lots
+    trades["risk_budget"] = risk_budget
+    trades["actual_risk_money"] = actual_risk_money
+    trades["actual_risk_pct"] = actual_risk_pct
+    trades["notional"] = notional
+    trades["gross_leverage"] = gross_leverage
     trades["profit"] = profit
     trades["balance"] = balance_after
     equity = pd.Series(eq_values, index=pd.DatetimeIndex(eq_times), name="balance")

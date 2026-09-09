@@ -62,6 +62,9 @@ An entry on or beyond its stop is rejected. The spread and minimum-stop guards
 are evaluated at entry. Position size risks the selected percentage of current
 equity, rounds down to the lot step, then applies the symbol's min/max lots.
 Minimum-lot clamping can exceed requested risk.
+When `max_gross_leverage` is positive, money simulation also caps total open
+notional at equity times that value. If even one minimum lot is unaffordable,
+the hypothetical signal remains in the research ledger with zero executed lots.
 
 ## Exit and measurement
 
@@ -76,7 +79,9 @@ the final Python bar.
 Gross R excludes commission. Money P/L includes configured spread behavior and
 per-side commission. MFE and MAE are bar-path estimates in initial R; entry-bar
 ordering can overstate them without ticks. The result bundle records the range,
-decision events, trades, parameters, hashes and source assumptions.
+decision events, trades, parameters, hashes and source assumptions. Every bar
+that touches both SL and TP is explicitly flagged with its timestamp so the raw
+quote archive can later determine which executable side crossed first.
 
 ## Required parity procedure
 

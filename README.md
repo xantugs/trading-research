@@ -34,7 +34,7 @@ The launcher works from another working directory when invoked by full path.
 | Change settings | `python run_all.py --set tp_ratio=2 --set risk_pct=1 --no-app` |
 | Prepare the full Dukascopy dataset only | `python run_all.py --source dukascopy --data-only` |
 | Prepare Dukascopy data, backtest and open the app | `python run_all.py --source dukascopy` |
-| Merge downloaded WRDS years and run | `python run_all.py --source wrds --bars data/wrds/years --symbol QQQ --config configs/discussion.json --no-app` |
+| Merge downloaded WRDS years and run | `python run_all.py --source wrds --bars data/wrds/years --no-app` |
 | Run local M1 bars already in the strategy clock | `python run_all.py --source csv --bars data/NAS100_M1.csv --no-app` |
 | Start only the app after setup | `.venv/Scripts/python -m streamlit run app.py` (Windows) |
 
@@ -72,6 +72,22 @@ Explorer filters leave the full-run metrics unchanged. **Save run** and
 current browser session; export the comparison and settings before closing it.
 Preset changes preserve contract, cost and risk inputs, but reset strategy
 filters, management and the end-of-day setting.
+
+## QQQ on WRDS TAQ
+
+QQQ is the target research instrument once the compact WRDS years are local.
+Keep the licensed files outside Git and run:
+
+```sh
+python run_all.py --source wrds --bars data/wrds/years --no-app
+```
+
+WRDS mode automatically selects [configs/qqq.json](configs/qqq.json). The
+profile uses recorded M1 NBBO spread, whole shares, $1 P/L per $1 share move,
+a declared $0.005/share/side commission assumption, and a 1× gross-notional
+cap. Change commission and leverage to match the eventual broker. The recorded
+spread is a conservative full-minute p95 proxy; raw quote replay remains needed
+for exact fills and SL/TP ordering.
 
 ## Dukascopy now
 

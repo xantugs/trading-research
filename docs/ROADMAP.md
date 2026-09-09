@@ -29,11 +29,13 @@
 
 ## WRDS next
 
-Finish the 2012–2024 QQQ M1 history with the 07:30 New York start, validate all
-year manifests and preserve a small raw-event fixture that redistribution terms
-allow. Tick files can now be inspected as chart overlays; add a tick-driven
-execution replay for selected raw TAQ dates. Keep QQQ equity
-results separately labeled from Dukascopy CFD and MT5 broker experiments.
+Download and validate the completed 2012–2024 QQQ M1 history and the 2018–2022
+raw archive. M1 runs now use whole shares, recorded spread and a gross-notional
+cap. Next, build a lazy per-day NBBO quote store with nanosecond ordering and an
+explicit New-York-to-strategy-clock conversion. Use the exported
+`same_bar_ambiguous` timestamps to measure actual SL-first/TP-first ordering,
+then expand exact quote replay to entries and all exits. Keep QQQ equity results
+separately labeled from Dukascopy CFD and MT5 broker experiments.
 
 ## Deliberate later features
 

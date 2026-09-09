@@ -37,14 +37,16 @@ detects this and falls back to `time_m` ordering.
 
 The current builder begins at **07:30 New York time**. This supplies the full two
 hours before the 09:30 opening range. Earlier files built with the old 08:30
-default remain valid for the 50-M1 average-box experiment, but the engine will
-reject their two-hour range-ratio filter as insufficient history.
+default remain valid for strategies needing no more than one pre-open hour, but
+the engine rejects their two-hour range-ratio filter as insufficient history.
 
 ## Raw tick exports
 
 `wrds_submit_ticks.sh` submits one array task per month over 2018-2022 and calls
-`wrds_extract_taq.py` with a full 24-hour window, so pre-market and after-hours
-events are included. Weekends and holidays have no TAQ table; they are recorded
+`wrds_extract_taq.py` over each complete daily table, so pre-market and after-hours
+events are included. The already completed 2018–2022 pull used an exclusive
+23:59:59 endpoint; QQQ has no activity in that omitted final second, and future
+runs use the corrected 24:00 endpoint. Weekends and holidays have no TAQ table; they are recorded
 under `manifest.json` -> `missing_tables` rather than failing the task.
 
 The extractor writes **zstd Parquet** by default, which runs roughly 3-4x smaller
@@ -72,17 +74,23 @@ Create `data/wrds/years`, connect with SFTP, then download `orb_m1_years_0730` i
 that folder. WRDS password and MFA stay in the interactive SFTP client and are
 never stored by this project.
 
-Prepare one merged local gzip file, validate it, run the discussion setup, and
+Prepare one merged local gzip file, validate it, run the QQQ equity setup, and
 write a report:
 
 ```sh
 python run_all.py --source wrds --bars data/wrds/years --symbol QQQ \
-  --config configs/discussion.json --no-app
+  --config configs/qqq.json --no-app
 ```
 
 Omit `--no-app` to open ORB Lab. `run_all.py` accepts one WRDS M1 file or a
 directory of non-overlapping yearly files. Directory input is combined under
 `data/wrds/prepared/`; overlapping timestamps are rejected.
+For `--source wrds`, `configs/qqq.json` is selected automatically unless an
+explicit config is supplied. It uses whole shares, recorded NBBO spread, a
+declared per-share commission assumption and a 1× gross-notional cap.
+Sibling year manifests are checksum/clock/symbol validated when present. A
+missing manifest produces an explicit provenance warning; a partial manifest
+set is rejected.
 
 To test another forecast width, pass any positive decimal multiplier:
 

@@ -99,6 +99,11 @@ non-crossed best bids. Spread is the within-minute 95th percentile NBBO spread,
 rounded up to symbol points. `tick_volume` counts positive consolidated trades
 with correction code `00`; `real_volume` sums their share size.
 
+That p95 spread is a conservative quote-update statistic for the whole minute.
+Using it at the minute open therefore looks ahead within that minute and is not
+the exact executable spread at entry. It is suitable as the first M1 cost proxy;
+ordered NBBO ticks are still required to validate fills and same-bar ordering.
+
 TAQ source timestamps are New York wall time. The builder adds seven hours so
 09:30 is stored as 16:30 throughout the year, matching the project strategy
 clock. Its 07:30 source start provides two full hours before the opening range.
@@ -106,5 +111,8 @@ Gzip CSV input is accepted directly by the loader and ORB Lab.
 
 The separate raw extractor writes consolidated trades and complete NBBO quote
 updates by day. These are event-level SIP records, not full depth-of-book data,
-and they are not broker CFD ticks. The current Python engine remains M1-driven.
+and they are not broker CFD ticks. The overlay preserves nanosecond ordering,
+reports missing/crossed quotes and applies the explicit +7-hour clock shift;
+future execution replay must reject unusable quotes rather than silently use
+them. The current Python engine remains M1-driven.
 See [the WRDS workflow](WRDS.md).

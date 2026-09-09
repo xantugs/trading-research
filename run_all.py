@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import json
 import os
 import subprocess
 import sys
@@ -133,11 +134,37 @@ def pipeline(args) -> tuple[Path, Path | None]:
             m1.to_csv(data_path, compression="gzip", float_format="%.8f")
         else:
             raise ValueError(f"WRDS bars path does not exist: {requested}")
+        manifest_files = []
+        missing_manifests = []
+        for file in inputs:
+            manifest_path = file.parent / "manifest.json"
+            if not manifest_path.exists():
+                missing_manifests.append(str(manifest_path))
+                continue
+            metadata = json.loads(manifest_path.read_text(encoding="utf-8"))
+            if metadata.get("symbol") != args.symbol.upper():
+                raise ValueError(f"WRDS manifest symbol mismatch: {manifest_path}")
+            if metadata.get("file") and metadata["file"] != file.name:
+                raise ValueError(f"WRDS manifest file mismatch: {manifest_path}")
+            if metadata.get("sha256") and metadata["sha256"] != file_hash(file):
+                raise ValueError(f"WRDS input checksum mismatch: {file}")
+            if metadata.get("strategy_clock") != "New York wall time + 7 hours":
+                raise ValueError(f"WRDS manifest strategy clock is not ny+7: {manifest_path}")
+            if metadata.get("point") is not None and float(metadata["point"]) != params.point:
+                raise ValueError(f"WRDS manifest point does not match the config: {manifest_path}")
+            manifest_files.append(str(manifest_path))
+        if manifest_files and missing_manifests:
+            raise ValueError("Some WRDS inputs have manifests and others do not; keep a complete provenance set")
+        provenance = "validated" if manifest_files else "manifests not supplied"
+        if missing_manifests:
+            print("WRDS provenance warning: no sibling manifest.json; download the year manifest too", flush=True)
         source.update(
             label=f"WRDS NYSE TAQ / {args.symbol.upper()} consolidated NBBO M1",
             clock="New York wall time + 7 hours",
             price_basis="valid non-crossed consolidated NBBO best bid",
             input_files=[file.name for file in inputs],
+            manifest_validation=provenance,
+            manifest_files=manifest_files,
         )
     else:
         if not args.bars:
@@ -148,6 +175,8 @@ def pipeline(args) -> tuple[Path, Path | None]:
     progress.step(f"data ready ({len(m1):,} M1 bars)")
     if infer_minutes(m1) != 1:
         raise ValueError("run_all requires M1 bars. Use the app or engine API for coarser bars.")
+    if params.use_data_spread and not (m1["spread"] > 0).any():
+        raise ValueError("use_data_spread=true, but the input has no positive recorded spreads")
     quality = quality_report(m1, args.tf, params.orb_hour, params.orb_minute)
     if quality["incomplete_or_missing_opening_ranges"]:
         raise ValueError("Incomplete/missing opening range on observed days: " +
@@ -188,7 +217,8 @@ def parse_args(argv=None):
     ap.add_argument("--data-only", action="store_true",
                     help="Install dependencies, prepare and validate data, then stop")
     ap.add_argument("--bars", type=Path)
-    ap.add_argument("--config", type=Path, default=ROOT / "configs/baseline.json")
+    ap.add_argument("--config", type=Path,
+                    help="Settings JSON; defaults to configs/qqq.json for WRDS and baseline.json otherwise")
     ap.add_argument("--set", action="append", default=[], metavar="KEY=VALUE")
     ap.add_argument("--tf", type=int, default=15, choices=[5, 15, 30, 60])
     ap.add_argument("--demo-days", type=int, default=120)
@@ -226,6 +256,8 @@ def parse_args(argv=None):
         args.start = DEFAULT_DUKASCOPY_START
     if args.source == "wrds" and args.symbol == "USATECHIDXUSD":
         args.symbol = "QQQ"
+    if args.config is None:
+        args.config = ROOT / "configs" / ("qqq.json" if args.source == "wrds" else "baseline.json")
     return args
 
 

@@ -21,8 +21,9 @@ def _read(source: str | Path | bytes, name: str | None) -> pd.DataFrame:
     return pd.read_csv(payload, compression="gzip" if hint.endswith(".gz") else "infer")
 
 
-def load_ticks(source: str | Path | bytes, name: str | None = None) -> pd.DataFrame:
-    """Return a time-indexed frame with standardized ``bid``, ``ask`` and/or ``price``."""
+def load_ticks(source: str | Path | bytes, name: str | None = None,
+               strategy_offset_hours: int = 0) -> pd.DataFrame:
+    """Return standardized ticks, optionally shifted from source to strategy clock."""
     raw = _read(source, name)
     if raw.empty:
         raise ValueError("Tick file is empty")
@@ -34,6 +35,11 @@ def load_ticks(source: str | Path | bytes, name: str | None = None) -> pd.DataFr
 
     if "date" in raw and "time_m" in raw:
         stamps = pd.to_datetime(raw.date.astype(str) + " " + raw.time_m.astype(str), errors="coerce")
+        # TAQ's time_m carries microseconds and time_m_nano carries the remaining
+        # three digits. Preserve both before ordering equal-microsecond events.
+        if "time_m_nano" in raw:
+            nanos = pd.to_numeric(raw.time_m_nano, errors="coerce").fillna(0)
+            stamps = stamps + pd.to_timedelta(nanos, unit="ns")
     elif "date" in raw and "time" in raw:
         stamps = pd.to_datetime(raw.date.astype(str) + " " + raw.time.astype(str), errors="coerce")
     else:
@@ -43,31 +49,45 @@ def load_ticks(source: str | Path | bytes, name: str | None = None) -> pd.DataFr
         stamps = pd.to_datetime(raw[field], errors="coerce")
     if getattr(stamps.dt, "tz", None) is not None:
         stamps = stamps.dt.tz_localize(None)
+    if strategy_offset_hours:
+        stamps = stamps + pd.Timedelta(hours=strategy_offset_hours)
 
     prices = [column for column in ("bid", "ask", "price") if column in raw]
     if not prices:
         raise ValueError("Tick file needs bid/ask quotes or a price column")
     output = raw.drop(columns=[column for column in ("timestamp", "datetime", "time", "date", "time_m")
                                if column in raw], errors="ignore").copy()
-    output.index = pd.DatetimeIndex(stamps, name="time")
-    output = output[~output.index.isna()].sort_index(kind="stable")
+    output["_stamp"] = stamps
+    dropped_timestamps = int(output._stamp.isna().sum())
+    output = output[output._stamp.notna()]
+    sequence = next((column for column in ("tr_seqnum", "qu_seqnum", "seqnum") if column in output), None)
+    ordering = ["_stamp"] + ([sequence] if sequence else [])
+    output = output.sort_values(ordering, kind="stable").set_index("_stamp")
+    output.index.name = "time"
     for column in prices:
         output[column] = pd.to_numeric(output[column], errors="coerce")
     keep = prices + [column for column in output if column not in prices]
-    return output[keep]
+    output = output[keep]
+    output.attrs["dropped_timestamps"] = dropped_timestamps
+    return output
 
 
 def tick_quality(ticks: pd.DataFrame) -> dict[str, int | float | str]:
     """Small, deterministic audit used by the Streamlit tick overlay."""
     price_columns = [column for column in ("bid", "ask", "price") if column in ticks]
-    invalid = ~np.isfinite(ticks[price_columns]).all(axis=1) | (ticks[price_columns] <= 0).any(axis=1)
-    crossed = ((ticks.ask < ticks.bid) if {"bid", "ask"}.issubset(ticks.columns)
+    numeric = ticks[price_columns].apply(pd.to_numeric, errors="coerce")
+    matrix = numeric.to_numpy(dtype=float, na_value=np.nan)
+    invalid = ~np.isfinite(matrix).all(axis=1) | (matrix <= 0).any(axis=1)
+    crossed = (((pd.to_numeric(ticks.ask, errors="coerce")
+                 < pd.to_numeric(ticks.bid, errors="coerce")).fillna(False))
+               if {"bid", "ask"}.issubset(ticks.columns)
                else pd.Series(False, index=ticks.index))
     return {
         "rows": len(ticks),
         "first": str(ticks.index.min()),
         "last": str(ticks.index.max()),
         "duplicate_timestamps": int(ticks.index.duplicated(keep=False).sum()),
+        "dropped_timestamps": int(ticks.attrs.get("dropped_timestamps", 0)),
         "invalid_prices": int(invalid.sum()),
         "crossed_quotes": int(crossed.sum()),
     }
