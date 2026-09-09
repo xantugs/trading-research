@@ -27,7 +27,6 @@ PLOT_CONFIG = {"displaylogo": False, "scrollZoom": False,
 
 PRESETS = {
     "Baseline": ({}, "Close confirmation, both directions, 1.5R target. Flat at 22:45."),
-    "Tighter stop": ({"sl_ratio": 0.5}, "Stop halfway into the opening range. Keep an eye on stop-outs."),
     "Midpoint stop": ({"stop_mode": "midpoint"}, "Place the initial stop at the centre of the range."),
     "Historical range": ({"range_mode": "historical_percentile"}, "Forecast from prior sessions' matching opening ranges."),
     "Adaptive range": ({"range_mode": "historical_percentile_premarket"}, "Historical opening range adjusted by today's premarket volatility."),
