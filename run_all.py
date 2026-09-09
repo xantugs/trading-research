@@ -22,6 +22,26 @@ ROOT = Path(__file__).resolve().parent
 DEFAULT_DUKASCOPY_START = "2022-01-01"
 
 
+class Progress:
+    """Small dependency-free progress display for the end-to-end launcher."""
+
+    def __init__(self, total: int):
+        self.total = total
+        self.done = 0
+        self._write("starting")
+
+    def _write(self, label: str) -> None:
+        width = 30
+        filled = round(width * self.done / self.total)
+        bar = "#" * filled + "-" * (width - filled)
+        percent = round(100 * self.done / self.total)
+        print(f"[{bar}] {percent:3d}% {self.done}/{self.total} {label}", flush=True)
+
+    def step(self, label: str) -> None:
+        self.done += 1
+        self._write(label)
+
+
 def command(argv, **kwargs):
     print("+ " + subprocess.list2cmdline([str(x) for x in argv]), flush=True)
     return subprocess.run([str(x) for x in argv], cwd=ROOT, check=True, **kwargs)
@@ -47,8 +67,10 @@ def pipeline(args) -> tuple[Path, Path | None]:
     from orb.config import load_params
     from orb.reporting import file_hash, quality_report, save_result
 
+    progress = Progress(3 if args.data_only else 4)
     params = load_params(args.config, args.set)
     params.validate(args.tf)
+    progress.step("settings ready")
     source = {"provider": args.source}
     if args.source == "demo":
         from orb.synthetic import make_synthetic_m1
@@ -123,6 +145,7 @@ def pipeline(args) -> tuple[Path, Path | None]:
         data_path = args.bars.resolve()
         m1 = load_bars(data_path)
         source.update(label=f"Local CSV: {data_path.name}", clock="user-provided strategy clock")
+    progress.step(f"data ready ({len(m1):,} M1 bars)")
     if infer_minutes(m1) != 1:
         raise ValueError("run_all requires M1 bars. Use the app or engine API for coarser bars.")
     quality = quality_report(m1, args.tf, params.orb_hour, params.orb_minute)
@@ -130,6 +153,7 @@ def pipeline(args) -> tuple[Path, Path | None]:
         raise ValueError("Incomplete/missing opening range on observed days: " +
                          ", ".join(quality["incomplete_or_missing_opening_ranges"][:10]) +
                          ". Check coverage and timezone; use a complete session subset.")
+    progress.step("data validated")
     if args.data_only:
         print(f"Data ready: {data_path.resolve()} ({len(m1):,} M1 bars)")
         return data_path, None
@@ -140,6 +164,7 @@ def pipeline(args) -> tuple[Path, Path | None]:
     source.update(file=data_path.name, sha256=file_hash(data_path), signal_minutes=args.tf)
     output = args.output or ROOT / "outputs" / datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S_%fZ")
     report = save_result(result, output, source, quality)
+    progress.step("backtest and report complete")
     print(f"Trades: {result.stats['trades']} | gross R: {result.stats['total_r']:.2f} | "
           f"closed-balance return: {result.stats['return_pct']:.2f}%")
     print(f"Report: {report.resolve()}")

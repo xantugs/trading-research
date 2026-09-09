@@ -19,6 +19,9 @@ Alternatively copy `mt5/ORB_Backtest.mq5` to
 3. Confirm the chart clock at the NY opening bell. Match ORB/cutoff settings.
 4. Initially disable breakeven, trailing, volume skipping and trend filters.
    Match EOD on/off explicitly: Python's supplied baseline config is on.
+   `InpAllowLiveTrading` stays false for tester runs. Outside Strategy Tester,
+   the EA records signals but cannot place orders until this input is explicitly
+   enabled after validation.
 5. Enable visual mode. Check that the range box is on the intended 15-minute
    candle and inspect the journal for warnings or rejected orders.
 6. Save a unique `InpLogFile`. The EA writes to the terminal's shared
@@ -31,7 +34,7 @@ For each trade record the date/direction, opening-range high/low, breakout
 candle close, next bar open/fill, SL, TP, lot size and exit reason. Check:
 
 - Was the range candle really the session open on that date?
-- Was entry before cutoff, on the first signal in that direction?
+- Was entry before cutoff, on the first confirmed signal of either direction?
 - Did stop and target match the formulas in MODEL.md?
 - Was the volume/ATR/trend filter status understood?
 - Does the journal explain any skipped trade or fill difference?
@@ -52,8 +55,8 @@ research and are not currently emitted in MT5's custom-tick import format.
 ## Reconciliation
 
 Use the same M1 source to derive the signal bars for Python. Run
-`reconcile.py --strict` with matching spread settings. New v1.30+ log headers
-carry ATR/volume settings and initial contract/balance information.
+`reconcile.py --strict` with matching spread settings. EA v1.40 log headers
+carry range, confirmation, stop, trend, guard, ATR/volume and contract settings.
 Older logs need explicit overrides for anything absent from the header.
 
 Entry time is compared at minute granularity. Stops/targets/entry/exit use

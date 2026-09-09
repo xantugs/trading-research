@@ -89,6 +89,8 @@ class Params:
     # execution model
     spread: float = 0.0                # constant spread in price units (ask = bid + spread)
     use_data_spread: bool = False      # use each bar's recorded spread (points x point) instead
+    max_spread: float = 0.0            # skip entry above this price-unit spread (0 = off)
+    min_stop_points: int = 0           # minimum initial risk in symbol points (0 = off)
     point: float = 0.01                # symbol point size (NAS100 with 2 digits -> 0.01)
     same_bar_rule: str = "sl_first"    # "sl_first" | "tp_first"
     # money
@@ -176,7 +178,7 @@ class Params:
         for name in ("initial_balance", "point", "point_value", "lot_step", "min_lot", "max_lot"):
             if getattr(self, name) <= 0:
                 raise ValueError(f"{name} must be positive")
-        for name in ("spread", "commission_per_lot", "atr_period", "min_range_atr", "max_range_atr",
+        for name in ("spread", "max_spread", "min_stop_points", "commission_per_lot", "atr_period", "min_range_atr", "max_range_atr",
                      "vol_lookback", "vol_spike_min", "filter_ma_period", "filter_ma_slope_bars",
                      "filter_ma_min_slope_pct", "max_range_lookback_ratio",
                      "breakeven_at_r",
@@ -202,6 +204,7 @@ class Result:
     days: pd.DataFrame            # one row per day with an opening-range candle
     equity: pd.Series             # balance after each closed trade (first point = initial balance)
     stats: dict = field(default_factory=dict)
+    events: pd.DataFrame = field(default_factory=pd.DataFrame)
 
     def by(self, key: str) -> pd.DataFrame:
         """Grouped summary: key in {'year', 'entry_hour', 'weekday', 'reason', 'direction'}."""
@@ -285,6 +288,12 @@ def run_backtest(bars: pd.DataFrame, params: Params, path: Optional[pd.DataFrame
 
     trades: list[dict] = []
     days: list[dict] = []
+    events: list[dict] = []
+
+    def add_event(when, kind: str, detail: str, direction="", price=np.nan, status="info") -> None:
+        stamp = pd.Timestamp(when)
+        events.append({"date": stamp.date(), "time": stamp, "event": kind, "direction": direction,
+                       "price": price, "status": status, "detail": detail})
 
     for session_i, orb_i in enumerate(orb_indices):
         day = sig.day[orb_i]
@@ -295,6 +304,7 @@ def run_backtest(bars: pd.DataFrame, params: Params, path: Optional[pd.DataFrame
             start = session_i - p.range_history_sessions
             previous = observed_widths[max(0, start):session_i]
             if len(previous) < p.range_history_sessions or not np.isfinite(previous).all():
+                add_event(orb_time, "range_rejected", "Insufficient prior-session range history", status="rejected")
                 days.append({
                     "date": orb_time.date(), "orb_time": orb_time,
                     "orb_high": np.nan, "orb_low": np.nan, "orb_range": np.nan,
@@ -310,6 +320,7 @@ def run_backtest(bars: pd.DataFrame, params: Params, path: Optional[pd.DataFrame
                 today_sigma = premarket_sigmas[session_i]
                 reference_sigma = float(np.median(prior_sigma)) if np.isfinite(prior_sigma).all() else np.nan
                 if not np.isfinite(today_sigma) or not np.isfinite(reference_sigma) or reference_sigma <= 0:
+                    add_event(orb_time, "range_rejected", "Incomplete premarket volatility history", status="rejected")
                     days.append({
                         "date": orb_time.date(), "orb_time": orb_time,
                         "orb_high": np.nan, "orb_low": np.nan, "orb_range": np.nan,
@@ -352,16 +363,24 @@ def run_backtest(bars: pd.DataFrame, params: Params, path: Optional[pd.DataFrame
             "short": "",
         }
         days.append(rec)
+        range_ready = orb_time + (pd.Timedelta(minutes=tf) if p.range_mode == "signal_bar" else pd.Timedelta(0))
+        add_event(range_ready, "range_ready",
+                  f"{range_note}: {o_l:.5f} to {o_h:.5f} ({rng:.5f} wide)")
 
         if rng <= 0:
             rec["status"] = "skipped: zero range"
+            add_event(range_ready, "range_rejected", "Range width is zero", status="rejected")
             continue
         if p.max_range_lookback_ratio > 0:
             if not history_complete or not np.isfinite(lookback_ratio):
                 rec["status"] = "skipped: insufficient range lookback history"
+                add_event(range_ready, "range_rejected", "Incomplete prior-window history", status="rejected")
                 continue
             if lookback_ratio > p.max_range_lookback_ratio:
                 rec["status"] = "skipped: range too large vs lookback"
+                add_event(range_ready, "range_rejected",
+                          f"Range/prior-window ratio {lookback_ratio:.3f} exceeds {p.max_range_lookback_ratio:g}",
+                          status="rejected")
                 continue
 
         atr_val = atr_by_day.get(day)
@@ -369,7 +388,10 @@ def run_backtest(bars: pd.DataFrame, params: Params, path: Optional[pd.DataFrame
         rec["range_atr"] = range_atr
 
         vol_ratio = 0.0
-        if p.vol_lookback > 0 and orb_i >= p.vol_lookback:
+        # A forecast box is tradeable at the opening timestamp, before that
+        # candle's final volume exists. Keep the observed-candle volume check
+        # out of forecast modes so it cannot look ahead.
+        if p.range_mode == "signal_bar" and p.vol_lookback > 0 and orb_i >= p.vol_lookback:
             prev_mean = sig.v[orb_i - p.vol_lookback : orb_i].mean()
             if prev_mean > 0:
                 vol_ratio = sig.v[orb_i] / prev_mean
@@ -377,13 +399,19 @@ def run_backtest(bars: pd.DataFrame, params: Params, path: Optional[pd.DataFrame
 
         if p.vol_spike_min > 0 and vol_ratio > 0 and vol_ratio < p.vol_spike_min:
             rec["status"] = "skipped: no volume spike"
+            add_event(range_ready, "range_rejected",
+                      f"Volume ratio {vol_ratio:.2f} is below {p.vol_spike_min:g}", status="rejected")
             continue
         if range_atr > 0:
             if p.min_range_atr > 0 and range_atr < p.min_range_atr:
                 rec["status"] = "skipped: range too small"
+                add_event(range_ready, "range_rejected", "Range is below the minimum daily-ATR ratio",
+                          status="rejected")
                 continue
             if p.max_range_atr > 0 and range_atr > p.max_range_atr:
                 rec["status"] = "skipped: range too large"
+                add_event(range_ready, "range_rejected", "Range exceeds the maximum daily-ATR ratio",
+                          status="rejected")
                 continue
 
         trade_taken = False
@@ -399,12 +427,29 @@ def run_backtest(bars: pd.DataFrame, params: Params, path: Optional[pd.DataFrame
                 tp = entry - (sl - entry) * p.tp_ratio
             if (direction > 0 and sl >= entry) or (direction < 0 and sl <= entry):
                 rec["long" if direction > 0 else "short"] = "skipped: entry beyond stop"
+                add_event(entry_time, "entry_rejected", "Entry is beyond the initial stop",
+                          "long" if direction > 0 else "short", entry, "rejected")
+                return
+            entry_spread = _spread_at(pth, p, index=path_start)
+            if p.max_spread > 0 and entry_spread > p.max_spread:
+                rec["long" if direction > 0 else "short"] = "skipped: spread too wide"
+                add_event(entry_time, "entry_rejected",
+                          f"Spread {entry_spread:.5f} exceeds {p.max_spread:g}",
+                          "long" if direction > 0 else "short", entry, "rejected")
+                return
+            risk = abs(entry - sl)
+            if p.min_stop_points > 0 and risk < p.min_stop_points * p.point:
+                rec["long" if direction > 0 else "short"] = "skipped: stop too close"
+                add_event(entry_time, "entry_rejected",
+                          f"Initial risk is below {p.min_stop_points} points",
+                          "long" if direction > 0 else "short", entry, "rejected")
                 return
             opening_quote = pth.o[path_start] + (_spread_at(pth, p, index=path_start) if direction > 0 else 0)
             intrabar_entry = p.entry_mode == "immediate" and abs(entry - opening_quote) > 1e-9
             exit_time, exit_price, reason = _resolve_exit(pth, path_start, direction, entry, sl, tp, p, eod,
                                                          intrabar_entry=intrabar_entry)
-            risk = abs(entry - sl)
+            exit_index = min(int(np.searchsorted(pth.t, exit_time, side="right")) - 1, len(pth.t) - 1)
+            mfe_r, mae_r = _excursions(pth, path_start, exit_index, direction, entry, risk, p)
             trades.append({
                 "date": rec["date"],
                 "direction": "long" if direction > 0 else "short",
@@ -427,7 +472,12 @@ def run_backtest(bars: pd.DataFrame, params: Params, path: Optional[pd.DataFrame
                 "exit": exit_price,
                 "reason": reason,
                 "r": (exit_price - entry) * direction / risk,
+                "mfe_r": mfe_r,
+                "mae_r": mae_r,
             })
+            side = "long" if direction > 0 else "short"
+            add_event(entry_time, "entry", f"Entered {side}; daily trade locked", side, entry, "accepted")
+            add_event(exit_time, "exit", f"Exited by {reason}", side, exit_price, "accepted")
             rec["long" if direction > 0 else "short"] = reason
             rec["status"] = "traded"
 
@@ -455,16 +505,31 @@ def run_backtest(bars: pd.DataFrame, params: Params, path: Optional[pd.DataFrame
                     direction = -1
                 if direction != 0:
                     trade_taken = True
+                    side = "long" if direction > 0 else "short"
+                    add_event(sig.t[i], "signal", f"Confirmed {side} breakout", side, sig.c[i], "accepted")
                     entry_time = sig.t[i + 1]
                     signal_close = sig.c[i]
                     if trend is not None and not trend.allows(direction, signal_close, entry_time):
                         rec["long" if direction > 0 else "short"] = "filtered"
+                        add_event(entry_time, "entry_rejected", "Trend filter vetoed the first confirmed signal",
+                                  side, signal_close, "rejected")
                     else:
                         spread = _spread_at(pth, p, entry_time)
                         entry = sig.o[i + 1] + (spread if direction > 0 else 0.0)
                         path_start = int(np.searchsorted(pth.t, entry_time))
                         open_trade(direction, entry, entry_time, path_start, sig.t[i])
-                    break
+                elif not trade_taken:
+                    if sig.h[i] > o_h and sig.c[i] <= o_h:
+                        add_event(sig.t[i], "wick_rejected", "High crossed the range but the candle did not close above",
+                                  "long", sig.h[i], "rejected")
+                    if sig.l[i] < o_l and sig.c[i] >= o_l:
+                        add_event(sig.t[i], "wick_rejected", "Low crossed the range but the candle did not close below",
+                                  "short", sig.l[i], "rejected")
+                elif sig.c[i] > o_h or sig.c[i] < o_l:
+                    side = "long" if sig.c[i] > o_h else "short"
+                    if not any(e["date"] == rec["date"] and e["event"] == "daily_lock" for e in events):
+                        add_event(sig.t[i], "daily_lock", f"Ignored later {side} breakout; daily trade already used",
+                                  side, sig.c[i], "rejected")
                 i += 1
         else:
             range_ready = sig.t[orb_i] if p.range_mode != "signal_bar" else sig.t[orb_i] + np.timedelta64(tf, "m")
@@ -473,16 +538,22 @@ def run_backtest(bars: pd.DataFrame, params: Params, path: Optional[pd.DataFrame
                 spread = _spread_at(pth, p, index=j)
                 if not trade_taken and allow_long and pth.h[j] + spread > o_h:
                     trade_taken = True
+                    add_event(pth.t[j], "signal", "Immediate long crossing", "long", pth.h[j] + spread, "accepted")
                     entry = max(pth.o[j] + spread, o_h + p.point)
                     if trend is not None and not trend.allows(1, entry, pth.t[j]):
                         rec["long"] = "filtered"
+                        add_event(pth.t[j], "entry_rejected", "Trend filter vetoed the first crossing",
+                                  "long", entry, "rejected")
                     else:
                         open_trade(1, entry, pth.t[j], j, pth.t[j])
                 elif not trade_taken and allow_short and pth.l[j] < o_l:
                     trade_taken = True
+                    add_event(pth.t[j], "signal", "Immediate short crossing", "short", pth.l[j], "accepted")
                     entry = min(pth.o[j], o_l - p.point)
                     if trend is not None and not trend.allows(-1, entry, pth.t[j]):
                         rec["short"] = "filtered"
+                        add_event(pth.t[j], "entry_rejected", "Trend filter vetoed the first crossing",
+                                  "short", entry, "rejected")
                     else:
                         open_trade(-1, entry, pth.t[j], j, pth.t[j])
                 if trade_taken:
@@ -491,12 +562,14 @@ def run_backtest(bars: pd.DataFrame, params: Params, path: Optional[pd.DataFrame
 
     trade_columns = ["date", "direction", "dir", "orb_time", "orb_high", "orb_low", "orb_range",
                      "range_mode", "range_lookback_ratio", "range_atr", "vol_ratio", "signal_time",
-                     "entry_time", "entry", "sl", "tp", "risk_dist", "exit_time", "exit", "reason", "r"]
+                     "entry_time", "entry", "sl", "tp", "risk_dist", "exit_time", "exit", "reason", "r",
+                     "mfe_r", "mae_r"]
     trades_df = pd.DataFrame(trades, columns=trade_columns)
     days_df = pd.DataFrame(days)
     trades_df, equity = _simulate_money(trades_df, p, start_time=bars.index[0])
+    events_df = pd.DataFrame(events, columns=["date", "time", "event", "direction", "price", "status", "detail"])
     stats = compute_stats(trades_df, equity, p, days_df)
-    return Result(params=p, trades=trades_df, days=days_df, equity=equity, stats=stats)
+    return Result(params=p, trades=trades_df, days=days_df, equity=equity, stats=stats, events=events_df)
 
 
 # --------------------------------------------------------------------------- #
@@ -542,6 +615,21 @@ def _spread_at(pth: _Arrays, p: Params, when: Optional[np.datetime64] = None, in
     if index is None:
         index = min(int(np.searchsorted(pth.t, when)), len(pth.t) - 1)
     return float(pth.spread[index]) * p.point
+
+
+def _excursions(pth: _Arrays, start: int, end: int, direction: int, entry: float,
+                risk: float, p: Params) -> tuple[float, float]:
+    """Maximum favourable/adverse excursion through the exit bar, in initial R."""
+    indices = range(start, end + 1)
+    if direction > 0:
+        best = max(float(pth.h[i]) - entry for i in indices)
+        worst = max(entry - float(pth.l[i]) for i in indices)
+    else:
+        lows = [float(pth.l[i]) + _spread_at(pth, p, index=i) for i in indices]
+        highs = [float(pth.h[i]) + _spread_at(pth, p, index=i) for i in indices]
+        best = entry - min(lows)
+        worst = max(highs) - entry
+    return max(best, 0.0) / risk, max(worst, 0.0) / risk
 
 
 def _resolve_exit(pth: _Arrays, start: int, d: int, entry: float, sl: float, tp: float, p: Params, eod: Optional[int],

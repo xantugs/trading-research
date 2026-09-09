@@ -21,7 +21,8 @@ def button(app, label):
 
 def test_app_load_and_backtest(app):
     assert not app.exception
-    assert [tab.label for tab in app.tabs] == ["Overview", "Trades", "Compare", "Algorithm", "Diagnostics"]
+    assert [tab.label for tab in app.tabs] == [
+        "Overview", "Trades", "Validation", "Compare", "Algorithm", "Data quality", "Diagnostics"]
     labels = {metric.label for metric in app.metric}
     assert {"Net return", "Win rate", "Average R", "Max drawdown"} <= labels
     assert {"EA source", "Selected setup", "Latest local compile"} <= labels
@@ -78,5 +79,4 @@ def test_algorithm_tab_reports_selected_mt5_parity(app):
     button(app, "Run backtest").click().run(timeout=30)
     assert not app.exception
     readiness = next(metric for metric in app.metric if metric.label == "Selected setup")
-    assert readiness.value == "Parity needed"
-    assert any("Forecast range construction" in item.value for item in app.warning)
+    assert readiness.value == "MT5-ready"

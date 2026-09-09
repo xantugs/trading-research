@@ -4,7 +4,7 @@ A reproducible Opening Range Breakout research project with a MetaTrader 5 EA,
 a Python bar simulator, Dukascopy, WRDS TAQ and MT5 data tools, trade reconciliation, and
 a Streamlit interface for someone who does not code.
 
-**Project version: 1.4.0.** The EA compiles locally with zero errors and warnings.
+**Project version: 1.5.0.** EA v1.40 compiles locally with zero errors and warnings.
 Python scenarios and the app are tested. Broker smoke testing and real-data
 reconciliation are still required. This repository does not establish a trading edge.
 
@@ -53,11 +53,18 @@ automatic recalculation. Pending changes are labeled until executed.
   and gross R; drag to zoom and explore monthly and grouped results.
 - **Trades:** filter by side, exit reason and entry date, export the filtered
   table, then inspect an individual trade on a candlestick chart with range,
-  entry, initial stop, target and exit markers.
+  entry, initial stop, target, exit and rejected-signal markers. Switch among
+  M1/M5/signal candles, read the decision timeline, and optionally overlay one
+  WRDS quote or trade tick file.
+- **Validation:** compare chronological development/holdout samples, bootstrap
+  trade sequences, inspect years and volatility regimes, run an expanding
+  yearly target-R walk-forward, and test a local target/stop parameter grid.
 - **Compare:** name and save up to eight runs, then overlay normalized returns
   by calendar time or closed-trade number and compare their assumptions.
 - **Algorithm:** read the active rules beside the real MQL5 source, inspect the
   matching MT5 inputs, see any parity gaps, and download the compilable EA.
+- **Data quality:** inspect timestamp gaps, estimated missing rows, invalid OHLC,
+  daily session coverage, range-candle completeness and recorded spread.
 - **Diagnostics:** inspect opening-range volume, daily flags and exact settings.
 
 Explorer filters leave the full-run metrics unchanged. **Save run** and
@@ -133,7 +140,7 @@ Each result folder contains:
 
 - `report.html`: self-contained interactive balance and drawdown charts, stats,
   diagnostics and a trade preview; it opens without a CDN.
-- `trades.csv`, `days.csv`, `balance.csv` and grouped summaries.
+- `trades.csv`, `events.csv`, `days.csv`, `balance.csv` and grouped summaries.
 - `params.json`, `stats.json`, `data_quality.json`.
 - `manifest.json`: source and code hashes, package versions, Git revision and
   dirty status, clock, execution assumptions and limitations.
@@ -163,9 +170,11 @@ hand-check ten trades. For broker data, install the optional terminal bridge:
 
 Use the **same instrument, clock, dates and broker data** on both sides.
 Reconciliation matches date/direction, rejects duplicate keys, and checks entry
-minute, entry/SL/TP/exit prices, exit reason and R. `--strict` returns exit code
-2 for mismatches. EA v1.30+ headers include ATR, volume, contract and initial
-balance settings; old v1.20 logs may require `--set` overrides. Per-tick
+minute, entry/SL/TP/exit prices, exit reason and R. EA logs also retain the
+requested entry, actual fill and signed slippage in points. `--strict` returns
+exit code 2 for mismatches. EA v1.40 headers include range, confirmation, stop,
+trend, guard, ATR, volume, contract and initial-balance settings. Old logs may
+require `--set` overrides. Per-tick
 management should be disabled for the first comparison. Exit time is retained
 for inspection but is not a strict check, because the Python time is a bar open.
 
@@ -186,9 +195,10 @@ also consumes that attempt.
 
 Stops can use a range multiple or the H/L midpoint. The engine also supports a
 full-window range proportion veto, daily ATR and volume filters, higher-timeframe
-EMA/SMA with a normalized slope veto, EOD close, breakeven and trailing. The new
-strategy switches are currently Python experiments; the EA still follows its
-v1.31 rules. [Exact model and limitations](docs/MODEL.md).
+EMA/SMA with a normalized slope veto, EOD close, breakeven and trailing. EA
+v1.40 implements the same selected strategy rules and adds live spread,
+stop-distance, margin and restart guards. [Canonical rules](docs/RULES.md) ·
+[Exact model and limitations](docs/MODEL.md).
 
 ## Project layout
 

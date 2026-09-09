@@ -60,6 +60,7 @@ def save_result(result: Result, output: Path, source: dict, quality: dict) -> Pa
     output.mkdir(parents=True, exist_ok=False)
     result.trades.to_csv(output / "trades.csv", index=False)
     result.days.to_csv(output / "days.csv", index=False)
+    result.events.to_csv(output / "events.csv", index=False)
     result.equity.to_csv(output / "balance.csv", index_label="time")
     write_json(output / "params.json", result.params.to_dict())
     write_json(output / "stats.json", result.stats)
@@ -78,17 +79,17 @@ def save_result(result: Result, output: Path, source: dict, quality: dict) -> Pa
     source_hashes = {str(p.relative_to(root)): file_hash(p) for p in sorted((root / "orb").glob("*.py"))}
     source_hashes["run_all.py"] = file_hash(root / "run_all.py")
     manifest = {
-        "created_at_utc": datetime.now(timezone.utc).isoformat(), "project_version": "1.4.0",
+        "created_at_utc": datetime.now(timezone.utc).isoformat(), "project_version": "1.5.0",
         "git_revision": revision, "git_dirty": dirty, "source_sha256": source_hashes,
         "python": platform.python_version(), "platform": platform.platform(),
         "packages": {k: importlib.metadata.version(k) for k in ("numpy", "pandas", "plotly", "tzdata")},
         "source": source, "params": result.params.to_dict(),
         "limitations": [
-            "Research simulation; EA compilation and broker reconciliation are pending.",
+            "Research simulation; local EA compilation passes, but broker smoke testing and reconciliation are pending.",
             "Balance drawdown excludes unrealized intratrade drawdown.",
             "R statistics are gross of commission; money profit includes per-side commission at exit.",
             "No margin, slippage, financing, currency conversion or netting-account model.",
-            "Minimum lot is clamped to EA v1.2 behavior and can exceed requested risk.",
+            "Minimum lot follows the EA clamping behavior and can exceed requested risk.",
             "Immediate entries and stop management have unknown intrabar ordering.",
             "END exits mark still-open trades at the last available close.",
         ],

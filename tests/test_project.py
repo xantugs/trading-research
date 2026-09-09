@@ -25,6 +25,7 @@ ROOT = Path(__file__).resolve().parents[1]
     {"range_multiplier": 0}, {"range_history_sessions": 0}, {"range_percentile": 101},
     {"premarket_window_minutes": 0}, {"premarket_sensitivity": -1}, {"confirmation_bars": 0},
     {"filter_ma_period": 0, "filter_ma_slope_bars": 2, "filter_ma_min_slope_pct": 0.1},
+    {"max_spread": -1}, {"min_stop_points": -1},
 ])
 def test_parameter_validation(change):
     with pytest.raises(ValueError):
@@ -39,10 +40,18 @@ def test_typed_overrides_and_unknown_keys():
 
 
 def test_extended_header():
-    p = parse_ea_header("# ORB EA v1.30 tf=PERIOD_M15 orb=16:30 ma=0/PERIOD_H1/MODE_EMA "
-                        "atr_period=20 vol_lookback=6 vol_spike_min=2 point_value=3 initial_balance=5000")
+    p = parse_ea_header("# ORB EA v1.40 tf=PERIOD_M15 orb=16:30 ma=0/PERIOD_H1/MODE_EMA "
+                        "atr_period=20 vol_lookback=6 vol_spike_min=2 point=0.01 point_value=3 "
+                        "initial_balance=5000 range_mode=historical_percentile range_sessions=30 "
+                        "range_percentile=60 range_multiplier=1.25 premarket_minutes=120 "
+                        "premarket_sensitivity=.5 confirmation_bars=3 confirmation_color=true "
+                        "stop_mode=midpoint range_lookback_minutes=90 max_range_lookback_ratio=.25 "
+                        "ma_slope_bars=2 ma_min_slope_pct=.05 max_spread_points=20 min_stop_points=50")
     assert p["atr_period"] == 20 and p["vol_spike_min"] == 2
     assert p["point_value"] == 3 and p["initial_balance"] == 5000
+    assert p["range_mode"] == "historical_percentile" and p["range_history_sessions"] == 30
+    assert p["confirmation_bars"] == 3 and p["confirmation_same_color"] is True
+    assert p["stop_mode"] == "midpoint" and p["max_spread"] == pytest.approx(.2)
     with pytest.raises(ValueError):
         tf_minutes("TYPO")
     with pytest.raises(ValueError):
@@ -67,6 +76,7 @@ def test_report_strict_json_and_no_overwrite(tmp_path):
     assert json.loads((target / "stats.json").read_text())["profit_factor"] is None
     assert "<script>bad</script>" not in report.read_text(encoding="utf-8")
     assert "source_sha256" in json.loads((target / "manifest.json").read_text())
+    assert (target / "events.csv").exists()
     with pytest.raises(FileExistsError):
         save_result(result, target, {}, {})
 
@@ -89,6 +99,7 @@ def test_launcher_from_another_working_directory(tmp_path):
     assert result.returncode == 0, result.stdout + result.stderr
     assert (tmp_path / "bundle/report.html").exists()
     assert (tmp_path / "bundle/trades.csv").exists()
+    assert "100% 4/4 backtest and report complete" in result.stdout
 
 
 def test_dukascopy_one_flag_has_research_defaults():
@@ -120,6 +131,7 @@ def test_data_only_prepares_local_bars_without_report(tmp_path):
     )
     assert result.returncode == 0, result.stdout + result.stderr
     assert "Data ready:" in result.stdout
+    assert "100% 3/3 data validated" in result.stdout
 
 
 def test_no_signals_not_counted_as_traded():

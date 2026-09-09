@@ -1,6 +1,6 @@
 # Research and engineering roadmap
 
-## Release 1.4 readiness
+## Release 1.5 readiness
 
 - Project packaging, one-command setup/pipeline, strict configuration.
 - Cached Dukascopy M1 download and optional streaming tick archive.
@@ -10,9 +10,11 @@
 - EA compiles locally; visual broker smoke test still pending.
 - Live Dukascopy verification pending after the feed timeout on this machine.
 - WRDS TAQ raw extraction and cloud-side M1 aggregation validated on QQQ.
-- Experimental historical opening-range forecasts, multi-candle confirmation, midpoint stop,
-  prior-range proportion filter and lagged normalized MA slope filter in Python.
-- Python experiment controls are pending MT5 EA parity and broker reconciliation.
+- Historical/adaptive opening-range forecasts, multi-candle confirmation,
+  midpoint stop, range-proportion and lagged MA-slope filters in Python and EA v1.40.
+- Decision audit trail, MFE/MAE, tick overlays, data-quality workspace,
+  bootstrap, local stability grid and expanding yearly walk-forward.
+- MT5 rule parity compiles locally; broker real-tick reconciliation remains pending.
 
 ## Next evidence to collect
 
@@ -29,17 +31,17 @@
 
 Finish the 2012–2024 QQQ M1 history with the 07:30 New York start, validate all
 year manifests and preserve a small raw-event fixture that redistribution terms
-allow. Add a tick-driven replay layer for selected raw TAQ dates. Keep QQQ equity
+allow. Tick files can now be inspected as chart overlays; add a tick-driven
+execution replay for selected raw TAQ dates. Keep QQQ equity
 results separately labeled from Dukascopy CFD and MT5 broker experiments.
 
 ## Deliberate later features
 
 - Exact tick-driven execution and MT5 custom-tick export.
-- MT5 EA parity for the experimental Python strategy switches.
 - Multi-candle opening ranges and venue/session calendars.
-- Spread guard, partial targets and explicit netting/margin rules.
+- Partial targets and explicit netting-account rules.
 - Intratrade equity and consistent daily-return performance statistics.
-- Parameter sweeps with holdout periods; trade-sequence bootstrap/Monte Carlo.
+- Nested multi-parameter optimization with an untouched final holdout.
 - Broker-specific overnight financing and currency conversion.
 
 These are planned features, not implemented switches.

@@ -75,14 +75,16 @@ does. Fetch additional history when filters are on and inspect early days.
 - The engine allows independent overlapping positions. Hedging accounts align
   better; an MT5 netting account can merge/reverse positions and invalidate the
   one-trade-per-date/direction reconciliation assumption.
-- Partial fills/exits and restarts of the EA are not fully reconstructed by
-  the log. Duplicate reconciliation keys are rejected, not multiplied.
+- EA v1.40 persists the daily consumed-signal lock and reconstructs the range
+  after a live restart. Open-trade logging still cannot reconstruct a restart
+  during an existing position or partial fill/exit. Duplicate reconciliation
+  keys are rejected, not multiplied.
 
 ## Money and statistics
 
 Money per lot is account-currency value for a 1.0 price move (tick value divided
 by tick size). Size is risk percent of balance plus floating P/L marked at the
-new entry price, floored to the lot step, then clamped to min/max like EA v1.2.
+new entry price, floored to the lot step, then clamped to the EA's min/max behavior.
 **Clamping to the minimum may exceed the chosen risk percentage.** Spread-aware
 floating valuation and broker currency/margin rules are approximations.
 

@@ -1,4 +1,4 @@
-# Verification record — 2026-09-08
+# Verification record — 2026-09-10
 
 ## Passed locally
 
@@ -8,19 +8,19 @@ Streamlit 1.63.0, Plotly 6.9.0. The exact installed dependency snapshot is
 
 - `python run_all.py --check --compile-mt5 --no-app` completed its setup,
   compilation, lint, tests, 120-day demo and report pipeline.
-- **77 pytest cases passed**, including the original 17 engine scenarios and
-  new clock, data validation, BI5, cache/retry, strict reconciliation, report,
-  app and launcher cases.
+- **106 pytest cases passed**, including engine rules, decision events, MFE/MAE,
+  tick loading, clock/data validation, BI5, cache/retry, strict reconciliation,
+  report, app and launcher cases.
 - `python -m ruff check .`: all checks passed.
 - `python -m pip check`: no broken requirements.
 - `python -m build`: source distribution and engine wheel built.
-- MetaEditor **5.0.0.6140**, EA **1.31**: **0 errors, 0 warnings**.
+- MetaEditor **5.0.0.6140**, EA **1.40**: **0 errors, 0 warnings**.
   The local compiler log is `mt5/compile.log`; it is not committed.
 - Browser smoke test: the launcher served the app on localhost, the synthetic
   dataset loaded, Run backtest produced the summary metrics and rendered the
   balance chart. The browser values agreed with the command-line bundle.
 - Dark-workspace tests cover automatic reruns, unapplied setting changes,
-  saved result snapshots, comparison clearing and empty explorer filters.
+  saved result snapshots, comparison clearing, empty explorer filters and EA parity status.
 - Browser review at the in-app panel width confirmed dark controls, readable
   two-column summary cards, the candlestick inspector and saved-run chart.
 
@@ -41,7 +41,9 @@ performance evidence. Reports are local under `outputs/`.
 - Real broker EA/Python trade reconciliation.
 - GitHub-hosted Windows/Linux/Python matrix: configured but not yet run on
   GitHub. Only the local Windows/Python 3.13 environment is verified here.
-- WRDS access, entitlements and adapter: not implemented or claimed.
+- Full 2018–2022 raw WRDS TAQ tick transfer and local file verification.
+  Cloud-side M1 aggregation and a short raw quote/trade extraction are verified;
+  provider data remains outside Git.
 
 ## Dependency replay
 

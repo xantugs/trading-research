@@ -5,15 +5,15 @@
 //
 //  WHAT IT DOES
 //  ------------
-//  1. Waits for one specific candle each day (the "opening range" candle,
-//     e.g. the 09:30 New York open on M15) and records its high and low.
+//  1. Builds one opening range each day from the observed opening candle or a
+//     prior-session percentile forecast, optionally adjusted by premarket RV.
 //  2. Trades the FIRST confirmed breakout of the day before a cutoff hour:
 //       - close-confirmation mode: a candle must CLOSE outside the range
 //         (previous candle was not already beyond that boundary), then enters
 //         at the next candle's open
 //       - immediate mode: entry as soon as price crosses the range
-//  3. Long SL = range high - range x SL ratio; short SL = range low +
-//     range x SL ratio. Take-profit = initial risk x TP ratio.
+//  3. Stop-loss uses a range multiple or the range midpoint. Take-profit =
+//     initial risk x TP ratio.
 //  4. Position size = risk % of equity / stop distance.
 //  5. Optional: end-of-day flat exit, range-vs-ATR filter, higher-timeframe
 //     MA trend filter, move-to-breakeven, trailing stop.
@@ -41,7 +41,7 @@
 //
 //+------------------------------------------------------------------+
 #property copyright   "echo"
-#property version     "1.31"
+#property version     "1.40"
 #property description "Opening Range Breakout EA - research / backtesting tool."
 #property description "Captures one candle's high/low each day and trades the first"
 #property description "confirmed breakout of the day before a cutoff hour."
@@ -50,7 +50,7 @@
 #include <Trade/Trade.mqh>
 
 #define ORB_BOX_PREFIX "ORB_box_"
-#define ORB_VERSION    "1.31"
+#define ORB_VERSION    "1.40"
 
 //+------------------------------------------------------------------+
 //| Enums (the trailing comments are what MetaTrader shows in the    |
@@ -97,6 +97,19 @@ enum ENUM_ORB_ENTRY_MODE
    ENTRY_IMMEDIATE     = 1    // Enter as soon as price crosses the range
   };
 
+enum ENUM_ORB_RANGE_MODE
+  {
+   RANGE_OBSERVED              = 0,   // Observed opening candle
+   RANGE_HISTORICAL_PERCENTILE = 1,   // Prior-session opening-range percentile
+   RANGE_HISTORICAL_PREMARKET  = 2    // Historical percentile adjusted by premarket volatility
+  };
+
+enum ENUM_ORB_STOP_MODE
+  {
+   STOP_RANGE_MULTIPLE = 0,   // Distance measured from breakout boundary
+   STOP_MIDPOINT       = 1    // Middle of opening range
+  };
+
 //+------------------------------------------------------------------+
 //| Inputs                                                           |
 //+------------------------------------------------------------------+
@@ -109,8 +122,17 @@ input ENUM_ORB_HOUR        InpCutoffHour     = HOUR_19;             // No new en
 input group "Strategy"
 input ENUM_ORB_ENTRY_MODE  InpEntryMode      = ENTRY_CLOSE_CONFIRM; // Entry mode
 input ENUM_ORB_DIRECTION   InpDirection      = DIR_BOTH;            // Trade direction
+input ENUM_ORB_RANGE_MODE  InpRangeMode      = RANGE_OBSERVED;      // Range construction
+input int                  InpRangeSessions  = 20;                  // Historical sessions
+input double               InpRangePercentile= 50.0;                // Historical percentile (0-100]
+input double               InpRangeMultiplier= 1.0;                 // Forecast width multiplier
+input int                  InpPremarketMinutes=120;                 // Volatility window before range
+input double               InpPremarketSensitivity=0.5;             // Volatility adjustment power
+input int                  InpConfirmationBars=1;                    // Consecutive closes outside range
+input bool                 InpConfirmationColor=false;               // Require green longs / red shorts
 input double               InpTpRatio        = 1.5;                 // Take-profit = initial risk x this
 input double               InpSlRatio        = 1.0;                 // Stop-loss = opening range x this
+input ENUM_ORB_STOP_MODE   InpStopMode       = STOP_RANGE_MULTIPLE; // Initial stop construction
 input double               InpRiskPercent    = 2.0;                 // Risk per trade (% of equity)
 
 input group "End of day"
@@ -122,6 +144,8 @@ input group "Opening-range filters"
 input int                  InpAtrPeriod      = 14;                  // Daily ATR period (for range / ATR)
 input double               InpMinRangeAtr    = 0.0;                 // Skip day if range < ATR x this (0 = off)
 input double               InpMaxRangeAtr    = 0.0;                 // Skip day if range > ATR x this (0 = off)
+input int                  InpRangeLookbackMinutes=120;              // Prior window for range proportion
+input double               InpMaxRangeLookbackRatio=0.0;             // Max range / prior span (0 = off)
 input int                  InpVolumeLookback = 8;                   // Candles before the range candle for the volume check
 input double               InpVolumeSpikeMin = 1.5;                 // Warn if range-candle volume < average x this (0 = off)
 input bool                 InpSkipNoSpike    = false;               // Skip the day when the volume check fails
@@ -130,6 +154,8 @@ input group "Higher-timeframe trend filter"
 input int                  InpFilterMaPeriod = 0;                   // MA period (0 = filter off)
 input ENUM_TIMEFRAMES      InpFilterTF       = PERIOD_H1;           // MA timeframe
 input ENUM_MA_METHOD       InpFilterMaMethod = MODE_EMA;            // MA method
+input int                  InpFilterSlopeBars=0;                     // Completed HTF bars for slope
+input double               InpFilterMinSlopePct=0.0;                 // Required signed slope percent
 
 input group "Exit management (R = initial risk distance)"
 input double               InpBreakEvenAtR   = 0.0;                 // Move SL to breakeven at +R (0 = off)
@@ -142,6 +168,9 @@ input group "Trade management"
 input string               InpComment        = "ORB bot";           // Trade comment
 input ulong                InpMagic          = 20260512;            // Magic number
 input int                  InpDeviation      = 10;                  // Max slippage (points)
+input double               InpMaxSpreadPoints= 0.0;                 // Skip wider spread (points, 0 = off)
+input int                  InpMinStopPoints  = 0;                   // Minimum initial stop (points, 0 = off)
+input bool                 InpAllowLiveTrading=false;               // Explicitly allow non-tester entries
 
 input group "Logging and display"
 input string               InpLogFile        = "ORB_trades.csv";    // Trade log in Common\Files (empty = off)
@@ -162,6 +191,7 @@ struct TradeRecord
    double   orbLow;
    double   rangeAtr;     // opening range / daily ATR (0 = unavailable)
    double   volRatio;     // range-candle volume / average of the candles before it (0 = unavailable)
+   double   requestedEntry;// quote used to build the order
    double   entry;        // actual fill price
    datetime entryTime;
    double   sl;           // initial stop
@@ -219,11 +249,23 @@ int OnInit()
    if(InpTpRatio <= 0.0 || InpSlRatio <= 0.0)
       return(Fail("TP and SL ratios must be positive"));
 
+   if(InpRangeSessions < 1 || InpRangePercentile <= 0.0 || InpRangePercentile > 100.0 ||
+      InpRangeMultiplier <= 0.0 || InpPremarketMinutes < 1 || InpPremarketSensitivity < 0.0)
+      return(Fail("Forecast-range inputs are invalid"));
+
+   if(InpConfirmationBars < 1)
+      return(Fail("Confirmation bars must be positive"));
+
    if(InpRiskPercent <= 0.0 || InpRiskPercent > 100.0)
       return(Fail("Risk percent must be between 0 and 100"));
 
-   if(InpMinRangeAtr < 0.0 || InpMaxRangeAtr < 0.0 || InpVolumeSpikeMin < 0.0 || InpVolumeLookback < 0)
+   if(InpMinRangeAtr < 0.0 || InpMaxRangeAtr < 0.0 || InpVolumeSpikeMin < 0.0 || InpVolumeLookback < 0 ||
+      InpRangeLookbackMinutes < 1 || InpMaxRangeLookbackRatio < 0.0 || InpFilterSlopeBars < 0 ||
+      InpFilterMinSlopePct < 0.0 || InpMaxSpreadPoints < 0.0 || InpMinStopPoints < 0)
       return(Fail("Filter values cannot be negative"));
+
+   if(InpFilterMinSlopePct > 0.0 && (InpFilterMaPeriod < 1 || InpFilterSlopeBars < 1))
+      return(Fail("MA slope filter needs a positive MA period and slope lookback"));
 
    if(InpBreakEvenAtR < 0.0 || InpBreakEvenLockR < 0.0 || InpTrailStartR < 0.0 || InpTrailStepR < 0.0)
       return(Fail("Exit-management R values cannot be negative"));
@@ -262,14 +304,17 @@ int OnInit()
 
 //--- start from the current bar so a stale signal is never traded on attach
    g_lastBarTime = iTime(_Symbol, InpTimeframe, 0);
+   g_currentDay = DayStart(TimeCurrent());
    ArrayResize(g_open, 0);
+   RestoreDailyState();
+   RecoverTodayRange();
 
 //--- summary
    Print("ORB EA v", ORB_VERSION, " started on ", _Symbol, " ", EnumToString(InpTimeframe));
    PrintFormat("  Opening-range candle %02d:%02d, entries until %02d:00 (server time), entry mode: %s",
                (int)InpOrbHour, InpOrbMinute, (int)InpCutoffHour, EntryModeText());
-   PrintFormat("  TP %.2f x risk, SL %.2f x range, risk %.2f%% per trade, direction: %s",
-               InpTpRatio, InpSlRatio, InpRiskPercent, DirectionText());
+   PrintFormat("  Range: %s, TP %.2f x risk, stop: %s, risk %.2f%% per trade, direction: %s",
+               RangeModeText(), InpTpRatio, StopModeText(), InpRiskPercent, DirectionText());
    if(InpCloseEod)
       PrintFormat("  End-of-day close at %02d:%02d", (int)InpCloseHour, InpCloseMinute);
    if(InpMinRangeAtr > 0.0 || InpMaxRangeAtr > 0.0)
@@ -364,20 +409,23 @@ void OnNewBar()
   {
    ResetOnNewDay(g_lastBarTime);
 
-//--- the last two CLOSED bars: rates[0] = most recent, rates[1] = the one before
+//--- the most recent closed signal bar
    MqlRates rates[];
    ArraySetAsSeries(rates, true);
-   if(CopyRates(_Symbol, InpTimeframe, 1, 2, rates) != 2)
+   if(CopyRates(_Symbol, InpTimeframe, 1, 1, rates) != 1)
       return;   // history not ready yet
    const MqlRates last = rates[0];
-   const MqlRates prev = rates[1];
 
-//--- no range yet: see if the bar that just closed is the opening-range candle
+//--- Forecast ranges are known at the opening time. Observed ranges are known
+//    only after the selected candle closes.
    if(!g_orbSet)
      {
-      TryCaptureOrb(last);
+      if(InpRangeMode != RANGE_OBSERVED)
+         TryForecastOrb(g_lastBarTime);
+      if(!g_orbSet && InpRangeMode == RANGE_OBSERVED)
+         TryCaptureOrb(last);
       UpdatePanel();
-      return;   // nothing to trade on the range candle itself
+      return;
      }
 
    UpdatePanel();
@@ -387,12 +435,38 @@ void OnNewBar()
    if(!IsBeforeCutoff(g_lastBarTime))
       return;
 
-//--- breakout = previous bar was not beyond this boundary, last bar closed outside.
-//    Using the previous CLOSE rather than the last bar's OPEN also catches gap breakouts.
-   if(!g_tradeTaken && DirectionAllowed(1) && prev.close <= g_orbHigh && last.close > g_orbHigh)
-      HandleSignal(1, last.close);
-   else if(!g_tradeTaken && DirectionAllowed(-1) && prev.close >= g_orbLow && last.close < g_orbLow)
-      HandleSignal(-1, last.close);
+   CheckCloseBreakout();
+  }
+
+//+------------------------------------------------------------------+
+//| Bar-close confirmation, including optional sequence and colour    |
+//+------------------------------------------------------------------+
+void CheckCloseBreakout()
+  {
+   if(g_tradeTaken)
+      return;
+   const int needed = InpConfirmationBars + 1;
+   MqlRates rates[];
+   ArraySetAsSeries(rates, true);
+   if(CopyRates(_Symbol, InpTimeframe, 1, needed, rates) != needed)
+      return;
+
+   bool longOk = DirectionAllowed(1) && rates[InpConfirmationBars].close <= g_orbHigh;
+   bool shortOk = DirectionAllowed(-1) && rates[InpConfirmationBars].close >= g_orbLow;
+   for(int i = 0; i < InpConfirmationBars; i++)
+     {
+      longOk = longOk && rates[i].close > g_orbHigh;
+      shortOk = shortOk && rates[i].close < g_orbLow;
+      if(InpConfirmationColor)
+        {
+         longOk = longOk && rates[i].close > rates[i].open;
+         shortOk = shortOk && rates[i].close < rates[i].open;
+        }
+     }
+   if(longOk)
+      HandleSignal(1, rates[0].close);
+   else if(shortOk)
+      HandleSignal(-1, rates[0].close);
   }
 
 //+------------------------------------------------------------------+
@@ -422,6 +496,14 @@ void HandleSignal(const int direction, const double refPrice)
 //--- The first confirmed breakout consumes the whole day's attempt. A signal
 //    vetoed by the trend filter does not let a later, weaker breakout through.
    g_tradeTaken = true;
+   SaveDailyState();
+
+   if(!MQLInfoInteger(MQL_TESTER) && !InpAllowLiveTrading)
+     {
+      Print("Signal recorded, but live entries are disabled. Set InpAllowLiveTrading=true to trade outside the tester.");
+      UpdatePanel();
+      return;
+     }
 
    if(!TrendAllows(direction, refPrice))
      {
@@ -441,6 +523,12 @@ void HandleSignal(const int direction, const double refPrice)
 void OpenBreakout(const int direction)
   {
    const double range = g_orbHigh - g_orbLow;
+   const double spreadPoints = (double)SymbolInfoInteger(_Symbol, SYMBOL_SPREAD);
+   if(InpMaxSpreadPoints > 0.0 && spreadPoints > InpMaxSpreadPoints)
+     {
+      PrintFormat("Spread %.1f points exceeds the %.1f-point limit - trade skipped", spreadPoints, InpMaxSpreadPoints);
+      return;
+     }
    const double entry = (direction > 0) ? SymbolInfoDouble(_Symbol, SYMBOL_ASK)
                                         : SymbolInfoDouble(_Symbol, SYMBOL_BID);
    double sl = 0.0;
@@ -448,12 +536,14 @@ void OpenBreakout(const int direction)
 
    if(direction > 0)
      {
-      sl = g_orbHigh - range * InpSlRatio;       // measured down from the top of the range
+      sl = InpStopMode == STOP_MIDPOINT ? (g_orbHigh + g_orbLow) / 2.0
+                                        : g_orbHigh - range * InpSlRatio;
       tp = entry + (entry - sl) * InpTpRatio;
      }
    else
      {
-      sl = g_orbLow + range * InpSlRatio;        // measured up from the bottom of the range
+      sl = InpStopMode == STOP_MIDPOINT ? (g_orbHigh + g_orbLow) / 2.0
+                                        : g_orbLow + range * InpSlRatio;
       tp = entry - (sl - entry) * InpTpRatio;
      }
 
@@ -473,6 +563,13 @@ void OpenBreakout(const int direction)
 //+------------------------------------------------------------------+
 bool ExecuteTrade(const int direction, double entry, double sl, double tp)
   {
+   const double requestedEntry = entry;
+   if(InpMinStopPoints > 0 && MathAbs(entry - sl) < InpMinStopPoints * _Point)
+     {
+      PrintFormat("Initial stop %.1f points is below the configured %d-point minimum - trade skipped",
+                  MathAbs(entry - sl) / _Point, InpMinStopPoints);
+      return(false);
+     }
    const double lots = CalcLots(entry, sl);
    if(lots <= 0.0)
      {
@@ -489,6 +586,20 @@ bool ExecuteTrade(const int direction, double entry, double sl, double tp)
      {
       Print("Stop or target is closer than the broker's minimum distance (",
             DoubleToString(minDist, _Digits), ") - trade skipped");
+      return(false);
+     }
+
+   double margin = 0.0;
+   const ENUM_ORDER_TYPE orderType = direction > 0 ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
+   if(!OrderCalcMargin(orderType, _Symbol, lots, entry, margin))
+     {
+      Print("Margin calculation failed (error ", GetLastError(), ") - trade skipped");
+      return(false);
+     }
+   if(margin > AccountInfoDouble(ACCOUNT_MARGIN_FREE))
+     {
+      PrintFormat("Required margin %.2f exceeds free margin %.2f - trade skipped",
+                  margin, AccountInfoDouble(ACCOUNT_MARGIN_FREE));
       return(false);
      }
 
@@ -522,6 +633,7 @@ bool ExecuteTrade(const int direction, double entry, double sl, double tp)
    rec.orbLow     = g_orbLow;
    rec.rangeAtr   = g_orbRangeAtr;
    rec.volRatio   = g_orbVolRatio;
+   rec.requestedEntry = requestedEntry;
    rec.entry      = entry;
    rec.entryTime  = TimeCurrent();
    rec.sl         = sl;
@@ -541,6 +653,10 @@ bool ExecuteTrade(const int direction, double entry, double sl, double tp)
       rec.commission = HistoryDealGetDouble(deal, DEAL_COMMISSION);
       rec.filled     = true;
      }
+
+   PrintFormat("Requested entry %s, actual fill %s, slippage %.1f points",
+               DoubleToString(rec.requestedEntry, _Digits), DoubleToString(rec.entry, _Digits),
+               (rec.entry - rec.requestedEntry) * direction / _Point);
 
    const int n = ArraySize(g_open);
    ArrayResize(g_open, n + 1);
@@ -613,7 +729,7 @@ void OnExitDeal(const ulong deal)
 
    if(g_logHandle != INVALID_HANDLE)
      {
-      const string line = StringFormat("%s,%s,%s,%s,%s,%s,%.3f,%.2f,%s,%s,%s,%s,%s,%.2f,%s,%s,%s,%.3f,%.2f,%.2f,%.2f,%.2f\n",
+      const string line = StringFormat("%s,%s,%s,%s,%s,%s,%.3f,%.2f,%s,%s,%s,%s,%.2f,%s,%s,%.2f,%s,%s,%s,%.3f,%.2f,%.2f,%.2f,%.2f\n",
                                        TimeToString(g_open[idx].orbTime, TIME_DATE),
                                        g_open[idx].direction > 0 ? "long" : "short",
                                        TimeToString(g_open[idx].orbTime, TIME_DATE|TIME_MINUTES),
@@ -621,11 +737,13 @@ void OnExitDeal(const ulong deal)
                                        DoubleToString(g_open[idx].orbLow, _Digits),
                                        DoubleToString(g_open[idx].orbHigh - g_open[idx].orbLow, _Digits),
                                        g_open[idx].rangeAtr,
-                                       g_open[idx].volRatio,
-                                       TimeToString(g_open[idx].signalTime, TIME_DATE|TIME_MINUTES|TIME_SECONDS),
-                                       TimeToString(g_open[idx].entryTime, TIME_DATE|TIME_MINUTES|TIME_SECONDS),
-                                       DoubleToString(g_open[idx].entry, _Digits),
-                                       DoubleToString(g_open[idx].sl, _Digits),
+                                        g_open[idx].volRatio,
+                                        TimeToString(g_open[idx].signalTime, TIME_DATE|TIME_MINUTES|TIME_SECONDS),
+                                        TimeToString(g_open[idx].entryTime, TIME_DATE|TIME_MINUTES|TIME_SECONDS),
+                                        DoubleToString(g_open[idx].requestedEntry, _Digits),
+                                        DoubleToString(g_open[idx].entry, _Digits),
+                                        (g_open[idx].entry - g_open[idx].requestedEntry) * g_open[idx].direction / _Point,
+                                        DoubleToString(g_open[idx].sl, _Digits),
                                        DoubleToString(g_open[idx].tp, _Digits),
                                        g_open[idx].lots,
                                        TimeToString(exitTime, TIME_DATE|TIME_MINUTES|TIME_SECONDS),
@@ -798,61 +916,213 @@ void TryCaptureOrb(const MqlRates &bar)
    if(dt.hour != (int)InpOrbHour || dt.min != InpOrbMinute)
       return;
 
-   const string when  = TimeToString(bar.time, TIME_DATE|TIME_MINUTES);
-   const double range = bar.high - bar.low;
-   if(range <= 0.0)
+   SetOrb(bar.time, bar.high, bar.low, bar.tick_volume, true, "Observed opening range");
+  }
+
+//--- build a forecast range at today's opening time from earlier sessions
+void TryForecastOrb(const datetime currentBar)
+  {
+   MqlDateTime dt;
+   TimeToStruct(currentBar, dt);
+   if(dt.hour != (int)InpOrbHour || dt.min != InpOrbMinute)
+      return;
+
+   double widths[];
+   datetime sessions[];
+   if(!HistoricalRanges(currentBar, widths, sessions))
      {
-      Print("Opening-range candle at ", when, " has zero range - no trades today");
-      g_dayStatus = "skipped: zero-range candle";
+      g_dayStatus = "skipped: insufficient session history";
+      Print(g_dayStatus);
       return;
      }
+   const double base = Percentile(widths, InpRangePercentile);
+   double adjustment = 1.0;
+   if(InpRangeMode == RANGE_HISTORICAL_PREMARKET)
+     {
+      const double todaySigma = RealizedSigma(currentBar);
+      double sigmas[];
+      ArrayResize(sigmas, ArraySize(sessions));
+      for(int i = 0; i < ArraySize(sessions); i++)
+         sigmas[i] = RealizedSigma(sessions[i]);
+      const double reference = Percentile(sigmas, 50.0);
+      if(todaySigma <= 0.0 || reference <= 0.0)
+        {
+         g_dayStatus = "skipped: insufficient premarket history";
+         Print(g_dayStatus);
+         return;
+        }
+      adjustment = MathPow(todaySigma / reference, InpPremarketSensitivity);
+     }
+   const int anchorShift = iBarShift(_Symbol, InpTimeframe, currentBar, true);
+   const double anchor = anchorShift >= 0 ? iOpen(_Symbol, InpTimeframe, anchorShift) : 0.0;
+   if(anchor <= 0.0)
+     {
+      g_dayStatus = "skipped: opening price unavailable";
+      return;
+     }
+   const double width = anchor * base * InpRangeMultiplier * adjustment;
+   const string label = InpRangeMode == RANGE_HISTORICAL_PREMARKET
+                        ? StringFormat("Historical P%.1f x %.2f x premarket %.2f", InpRangePercentile, InpRangeMultiplier, adjustment)
+                        : StringFormat("Historical P%.1f x %.2f", InpRangePercentile, InpRangeMultiplier);
+   SetOrb(currentBar, anchor + width / 2.0, anchor - width / 2.0, 0, false, label);
+  }
+
+//--- collect the last N matching observed opening candles, normalized by open
+bool HistoricalRanges(const datetime before, double &widths[], datetime &sessions[])
+  {
+   const int calendarDays = MathMax(60, InpRangeSessions * 4);
+   MqlRates history[];
+   const int copied = CopyRates(_Symbol, InpTimeframe, before - calendarDays * 86400, before - 1, history);
+   if(copied <= 0)
+      return(false);
+   double allWidths[];
+   datetime allSessions[];
+   for(int i = 0; i < copied; i++)
+     {
+      MqlDateTime dt;
+      TimeToStruct(history[i].time, dt);
+      if(dt.hour != (int)InpOrbHour || dt.min != InpOrbMinute || history[i].open <= 0.0)
+         continue;
+      const int n = ArraySize(allWidths);
+      ArrayResize(allWidths, n + 1);
+      ArrayResize(allSessions, n + 1);
+      allWidths[n] = (history[i].high - history[i].low) / history[i].open;
+      allSessions[n] = history[i].time;
+     }
+   const int available = ArraySize(allWidths);
+   if(available < InpRangeSessions)
+      return(false);
+   ArrayResize(widths, InpRangeSessions);
+   ArrayResize(sessions, InpRangeSessions);
+   for(int i = 0; i < InpRangeSessions; i++)
+     {
+      widths[i] = allWidths[available - InpRangeSessions + i];
+      sessions[i] = allSessions[available - InpRangeSessions + i];
+     }
+   return(true);
+  }
+
+//--- linearly interpolated percentile, matching numpy's default convention
+double Percentile(const double &values[], const double percentile)
+  {
+   const int n = ArraySize(values);
+   if(n <= 0)
+      return(0.0);
+   double sorted[];
+   ArrayCopy(sorted, values);
+   ArraySort(sorted);
+   for(int i = 0; i < n; i++)
+      if(!MathIsValidNumber(sorted[i]) || sorted[i] <= 0.0)
+         return(0.0);
+   const double position = (n - 1) * percentile / 100.0;
+   const int lower = (int)MathFloor(position);
+   const int upper = (int)MathCeil(position);
+   const double fraction = position - lower;
+   return(sorted[lower] + (sorted[upper] - sorted[lower]) * fraction);
+  }
+
+//--- realized log-return volatility in M1 bars ending immediately before end
+double RealizedSigma(const datetime end)
+  {
+   MqlRates minute[];
+   const datetime start = end - InpPremarketMinutes * 60;
+   const int copied = CopyRates(_Symbol, PERIOD_M1, start, end - 1, minute);
+   if(copied < InpPremarketMinutes || minute[0].open <= 0.0)
+      return(0.0);
+   double previous = minute[0].open;
+   double sum = 0.0;
+   for(int i = 0; i < copied; i++)
+     {
+      if(minute[i].close <= 0.0 || previous <= 0.0)
+         return(0.0);
+      const double value = MathLog(minute[i].close / previous);
+      sum += value * value;
+      previous = minute[i].close;
+     }
+   return(MathSqrt(sum));
+  }
+
+//--- apply common filters and accept an observed or forecast opening range
+bool SetOrb(const datetime time, const double high, const double low, const long volume,
+            const bool checkVolume, const string label)
+  {
+   const string when = TimeToString(time, TIME_DATE|TIME_MINUTES);
+   const double range = high - low;
+   if(range <= 0.0)
+     {
+      Print("Opening range at ", when, " has zero width - no trades today");
+      g_dayStatus = "skipped: zero range";
+      return(false);
+     }
+
+   if(!RangeLookbackAllows(time, range))
+      return(false);
 
    g_orbRangeAtr = RangeToAtr(range);
-   g_orbVolRatio = VolumeRatio(bar.tick_volume);
+   g_orbVolRatio = checkVolume ? VolumeRatio(volume, time) : 0.0;
 
-//--- volume self-check (session-open candles carry a volume spike)
-   if(InpVolumeSpikeMin > 0.0 && g_orbVolRatio > 0.0 && g_orbVolRatio < InpVolumeSpikeMin)
+   if(checkVolume && InpVolumeSpikeMin > 0.0 && g_orbVolRatio > 0.0 && g_orbVolRatio < InpVolumeSpikeMin)
      {
-      PrintFormat("WARNING %s: range-candle volume is only %.2fx the previous %d candles. Is %02d:%02d really the session open on this date (daylight-saving shift?)",
-                  when, g_orbVolRatio, InpVolumeLookback, (int)InpOrbHour, InpOrbMinute);
+      PrintFormat("WARNING %s: range-candle volume is only %.2fx the previous %d candles", when, g_orbVolRatio, InpVolumeLookback);
       if(InpSkipNoSpike)
         {
          g_dayStatus = StringFormat("skipped: no volume spike (x%.1f)", g_orbVolRatio);
-         return;
+         return(false);
         }
      }
 
-//--- range size relative to the daily ATR
    if(g_orbRangeAtr > 0.0)
      {
       if(InpMinRangeAtr > 0.0 && g_orbRangeAtr < InpMinRangeAtr)
         {
-         PrintFormat("%s: range is %.2f x ATR, below the minimum %.2f - no trades today", when, g_orbRangeAtr, InpMinRangeAtr);
          g_dayStatus = StringFormat("skipped: range %.2f ATR is too small", g_orbRangeAtr);
-         return;
+         return(false);
         }
       if(InpMaxRangeAtr > 0.0 && g_orbRangeAtr > InpMaxRangeAtr)
         {
-         PrintFormat("%s: range is %.2f x ATR, above the maximum %.2f - no trades today", when, g_orbRangeAtr, InpMaxRangeAtr);
          g_dayStatus = StringFormat("skipped: range %.2f ATR is too large", g_orbRangeAtr);
-         return;
+         return(false);
         }
      }
 
-   g_orbSet    = true;
-   g_orbHigh   = bar.high;
-   g_orbLow    = bar.low;
-   g_orbTime   = bar.time;
+   g_orbSet = true;
+   g_orbHigh = high;
+   g_orbLow = low;
+   g_orbTime = time;
    g_dayStatus = "";
+   PrintFormat("ORB set %s  %s  high %s  low %s  range %s", when, label,
+               DoubleToString(high, _Digits), DoubleToString(low, _Digits), DoubleToString(range, _Digits));
+   DrawOrbBox(time, high, low);
+   return(true);
+  }
 
-   PrintFormat("ORB set %s  high %s  low %s  range %s  (%.2f x ATR, volume x%.1f)",
-               when,
-               DoubleToString(bar.high, _Digits),
-               DoubleToString(bar.low, _Digits),
-               DoubleToString(range, _Digits),
-               g_orbRangeAtr, g_orbVolRatio);
-
-   DrawOrbBox(bar.time, bar.high, bar.low);
+//--- reject an opening range that is too large relative to the completed prior window
+bool RangeLookbackAllows(const datetime end, const double range)
+  {
+   if(InpMaxRangeLookbackRatio <= 0.0)
+      return(true);
+   MqlRates minute[];
+   const datetime start = end - InpRangeLookbackMinutes * 60;
+   const int copied = CopyRates(_Symbol, PERIOD_M1, start, end - 1, minute);
+   if(copied < InpRangeLookbackMinutes)
+     {
+      g_dayStatus = "skipped: incomplete prior range window";
+      return(false);
+     }
+   double high = minute[0].high;
+   double low = minute[0].low;
+   for(int i = 1; i < copied; i++)
+     {
+      high = MathMax(high, minute[i].high);
+      low = MathMin(low, minute[i].low);
+     }
+   const double span = high - low;
+   if(span <= 0.0 || range / span > InpMaxRangeLookbackRatio)
+     {
+      g_dayStatus = "skipped: range too large vs prior window";
+      return(false);
+     }
+   return(true);
   }
 
 //--- opening range divided by yesterday's daily ATR (0 when unavailable)
@@ -868,12 +1138,15 @@ double RangeToAtr(const double range)
 
 //--- range-candle tick volume relative to the average of the candles before it
 //    (the range candle is at shift 1 when this runs, so its predecessors start at 2)
-double VolumeRatio(const long orbVolume)
+double VolumeRatio(const long orbVolume, const datetime orbTime)
   {
    if(InpVolumeLookback <= 0)
       return(0.0);
+   const int orbShift = iBarShift(_Symbol, InpTimeframe, orbTime, true);
+   if(orbShift < 0)
+      return(0.0);
    long vol[];
-   if(CopyTickVolume(_Symbol, InpTimeframe, 2, InpVolumeLookback, vol) != InpVolumeLookback)
+   if(CopyTickVolume(_Symbol, InpTimeframe, orbShift + 1, InpVolumeLookback, vol) != InpVolumeLookback)
       return(0.0);
    double sum = 0.0;
    for(int i = 0; i < InpVolumeLookback; i++)
@@ -886,6 +1159,50 @@ double VolumeRatio(const long orbVolume)
 //+------------------------------------------------------------------+
 //| Helpers                                                          |
 //+------------------------------------------------------------------+
+
+//--- persist the one-attempt-per-day lock across live terminal restarts
+string DailyStateKey()
+  {
+   return(StringFormat("ORB.%I64d.%I64u.%s.trade_day",
+                       AccountInfoInteger(ACCOUNT_LOGIN), InpMagic, _Symbol));
+  }
+
+void SaveDailyState()
+  {
+   if(MQLInfoInteger(MQL_TESTER))
+      return;
+   GlobalVariableSet(DailyStateKey(), g_tradeTaken ? (double)g_currentDay : 0.0);
+  }
+
+void RestoreDailyState()
+  {
+   if(MQLInfoInteger(MQL_TESTER) || !GlobalVariableCheck(DailyStateKey()))
+      return;
+   g_tradeTaken = ((datetime)GlobalVariableGet(DailyStateKey()) == g_currentDay);
+   if(g_tradeTaken)
+      Print("Restored today's consumed breakout lock after restart");
+  }
+
+//--- reconstruct today's range when the EA is attached after the opening time
+void RecoverTodayRange()
+  {
+   const datetime now = TimeCurrent();
+   const datetime target = g_currentDay + (int)InpOrbHour * 3600 + InpOrbMinute * 60;
+   if(now < target)
+      return;
+   if(InpRangeMode != RANGE_OBSERVED)
+     {
+      TryForecastOrb(target);
+      return;
+     }
+   const int seconds = PeriodSeconds(InpTimeframe);
+   if(seconds <= 0 || now < target + seconds)
+      return;
+   MqlRates rangeBar[];
+   if(CopyRates(_Symbol, InpTimeframe, target, target + seconds - 1, rangeBar) == 1)
+      SetOrb(rangeBar[0].time, rangeBar[0].high, rangeBar[0].low,
+             rangeBar[0].tick_volume, true, "Recovered observed opening range");
+  }
 
 //--- true once per new bar on the signal timeframe
 bool IsNewBar()
@@ -915,6 +1232,7 @@ void ResetOnNewDay(const datetime barTime)
    g_tradeTaken  = false;
    g_eodDone     = false;
    g_dayStatus   = "";
+   SaveDailyState();
 
    if(!firstCall)
       Print("New day ", TimeToString(day, TIME_DATE), " - opening range reset");
@@ -951,8 +1269,12 @@ void UpdatePanel()
    s += StringFormat("Range candle %02d:%02d  |  entries until %02d:00  |  end-of-day close %s\n",
                      (int)InpOrbHour, InpOrbMinute, (int)InpCutoffHour,
                      InpCloseEod ? StringFormat("%02d:%02d", (int)InpCloseHour, InpCloseMinute) : "off");
-   s += StringFormat("Entry: %s  |  TP %.2fR  |  SL %.2f x range  |  risk %.1f%%  |  %s\n",
-                     EntryModeText(), InpTpRatio, InpSlRatio, InpRiskPercent, DirectionText());
+   s += StringFormat("Range: %s  |  Entry: %s (%d close%s)  |  %s\n",
+                     RangeModeText(), EntryModeText(), InpConfirmationBars,
+                     InpConfirmationColor ? ", colour required" : "", DirectionText());
+   s += StringFormat("TP %.2fR  |  stop %s  |  risk %.1f%%  |  spread now %.1f points\n",
+                     InpTpRatio, StopModeText(), InpRiskPercent,
+                     (double)SymbolInfoInteger(_Symbol, SYMBOL_SPREAD));
    if(g_orbSet)
       s += StringFormat("Today: range %s - %s (%s, %.2f x ATR, volume x%.1f)  |  trade: %s\n",
                         DoubleToString(g_orbLow, _Digits), DoubleToString(g_orbHigh, _Digits),
@@ -997,9 +1319,17 @@ void OpenLog()
                                     InpAtrPeriod, InpVolumeLookback, InpSkipNoSpike ? InpVolumeSpikeMin : 0.0,
                                     _Point, pointValue, SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_STEP),
                                     SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN), SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MAX),
-                                    AccountInfoDouble(ACCOUNT_BALANCE));
+                                     AccountInfoDouble(ACCOUNT_BALANCE));
+   StringReplace(completeSettings, "\n", "");
+   completeSettings += StringFormat(" range_mode=%s range_sessions=%d range_percentile=%.10g range_multiplier=%.10g premarket_minutes=%d premarket_sensitivity=%.10g confirmation_bars=%d confirmation_color=%s stop_mode=%s range_lookback_minutes=%d max_range_lookback_ratio=%.10g ma_slope_bars=%d ma_min_slope_pct=%.10g max_spread_points=%.10g min_stop_points=%d\n",
+                                    RangeModeKey(), InpRangeSessions, InpRangePercentile, InpRangeMultiplier,
+                                    InpPremarketMinutes, InpPremarketSensitivity, InpConfirmationBars,
+                                    InpConfirmationColor ? "true" : "false", StopModeKey(),
+                                    InpRangeLookbackMinutes, InpMaxRangeLookbackRatio,
+                                    InpFilterSlopeBars, InpFilterMinSlopePct,
+                                    InpMaxSpreadPoints, InpMinStopPoints);
    FileWriteString(g_logHandle, completeSettings);
-   FileWriteString(g_logHandle, "date,direction,orb_time,orb_high,orb_low,orb_range,range_atr,vol_ratio,signal_time,entry_time,entry,sl,tp,lots,exit_time,exit,reason,r_multiple,profit,commission,swap,balance\n");
+   FileWriteString(g_logHandle, "date,direction,orb_time,orb_high,orb_low,orb_range,range_atr,vol_ratio,signal_time,entry_time,requested_entry,entry,slippage_points,sl,tp,lots,exit_time,exit,reason,r_multiple,profit,commission,swap,balance\n");
    FileFlush(g_logHandle);
 
    Print("Logging trades to ", TerminalInfoString(TERMINAL_COMMONDATA_PATH), "\\Files\\", InpLogFile);
@@ -1065,7 +1395,23 @@ bool TrendAllows(const int direction, const double price)
       Print("Trend filter: MA value not available - signal skipped");
       return(false);
      }
-   return(direction > 0 ? price > ma[0] : price < ma[0]);
+   const bool priceSide = direction > 0 ? price > ma[0] : price < ma[0];
+   if(!priceSide || InpFilterMinSlopePct <= 0.0)
+      return(priceSide);
+
+//--- use only MA values that were complete before the breakout's HTF bar
+   double latest[];
+   double previous[];
+   if(CopyBuffer(g_maHandle, 0, 2, 1, latest) != 1 ||
+      CopyBuffer(g_maHandle, 0, InpFilterSlopeBars + 2, 1, previous) != 1 ||
+      previous[0] == 0.0)
+     {
+      Print("Trend filter: completed MA slope is not available - signal skipped");
+      return(false);
+     }
+   const double slopePct = (latest[0] - previous[0]) / MathAbs(previous[0]) * 100.0;
+   return(direction > 0 ? slopePct >= InpFilterMinSlopePct
+                        : slopePct <= -InpFilterMinSlopePct);
   }
 
 //--- the initial risk distance of a position.  TP is never modified, so it still
@@ -1123,6 +1469,35 @@ int VolumeDigits(double step)
 string EntryModeText()
   {
    return(InpEntryMode == ENTRY_IMMEDIATE ? "immediate break" : "close confirmation");
+  }
+
+string RangeModeKey()
+  {
+   if(InpRangeMode == RANGE_HISTORICAL_PERCENTILE)
+      return("historical_percentile");
+   if(InpRangeMode == RANGE_HISTORICAL_PREMARKET)
+      return("historical_percentile_premarket");
+   return("signal_bar");
+  }
+
+string RangeModeText()
+  {
+   if(InpRangeMode == RANGE_HISTORICAL_PERCENTILE)
+      return(StringFormat("historical P%.1f x %.2f", InpRangePercentile, InpRangeMultiplier));
+   if(InpRangeMode == RANGE_HISTORICAL_PREMARKET)
+      return(StringFormat("historical P%.1f x %.2f + premarket", InpRangePercentile, InpRangeMultiplier));
+   return("observed candle");
+  }
+
+string StopModeKey()
+  {
+   return(InpStopMode == STOP_MIDPOINT ? "midpoint" : "range_multiple");
+  }
+
+string StopModeText()
+  {
+   return(InpStopMode == STOP_MIDPOINT ? "range midpoint"
+                                       : StringFormat("%.2f x range", InpSlRatio));
   }
 
 string DirectionText()

@@ -1,5 +1,21 @@
 # Changelog
 
+## 1.5.0 — 2026-09-09
+
+- Added a decision-event ledger, daily-lock and rejected-signal chart markers,
+  MFE/MAE trade diagnostics and an exported `events.csv` audit trail.
+- Added M1/M5/signal-timeframe trade inspection plus optional WRDS TAQ quote or
+  trade tick overlays with basic tick-quality checks.
+- Added chronological holdout, trade-sequence bootstrap, annual/regime tables,
+  a parameter stability heatmap and expanding yearly target-R walk-forward.
+- Brought EA v1.40 to strategy parity for historical/adaptive range forecasts,
+  multi-candle colour confirmation, midpoint stops, prior-window range veto and
+  lagged MA slope rejection.
+- Added EA spread, minimum-stop and margin guards, explicit live-entry gating,
+  daily-lock restart persistence, range recovery, and fill-slippage logging.
+- Added a canonical rule contract and expanded EA-header reconciliation for all
+  new strategy and execution settings.
+
 ## 1.4.0 — 2026-09-09
 
 - Added three focused Python range choices: the observed opening candle, a

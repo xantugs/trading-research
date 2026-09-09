@@ -65,14 +65,37 @@ def parse_ea_header(line: str) -> dict:
     if "trail" in fields:
         start, dist, step = fields["trail"].split("/")
         out["trail_start_r"], out["trail_dist_r"], out["trail_step_r"] = float(start), float(dist), float(step)
-    for key in ("atr_period", "vol_lookback"):
+    integer_fields = {
+        "atr_period": "atr_period", "vol_lookback": "vol_lookback",
+        "range_sessions": "range_history_sessions", "premarket_minutes": "premarket_window_minutes",
+        "confirmation_bars": "confirmation_bars", "range_lookback_minutes": "range_lookback_minutes",
+        "ma_slope_bars": "filter_ma_slope_bars", "min_stop_points": "min_stop_points",
+    }
+    for key, name in integer_fields.items():
         if key in fields:
-            out[key] = int(fields[key])
+            out[name] = int(fields[key])
     if "vol_spike_min" in fields:
         out["vol_spike_min"] = float(fields["vol_spike_min"])
+    float_fields = {
+        "range_percentile": "range_percentile", "range_multiplier": "range_multiplier",
+        "premarket_sensitivity": "premarket_sensitivity",
+        "max_range_lookback_ratio": "max_range_lookback_ratio",
+        "ma_min_slope_pct": "filter_ma_min_slope_pct",
+    }
+    for key, name in float_fields.items():
+        if key in fields:
+            out[name] = float(fields[key])
+    if "range_mode" in fields:
+        out["range_mode"] = fields["range_mode"]
+    if "stop_mode" in fields:
+        out["stop_mode"] = fields["stop_mode"]
+    if "confirmation_color" in fields:
+        out["confirmation_same_color"] = fields["confirmation_color"].lower() == "true"
     for key in ("point", "point_value", "lot_step", "min_lot", "max_lot", "initial_balance"):
         if key in fields:
             out[key] = float(fields[key])
+    if "max_spread_points" in fields:
+        out["max_spread"] = float(fields["max_spread_points"]) * out.get("point", 1.0)
     return out
 
 

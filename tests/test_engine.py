@@ -87,6 +87,9 @@ def test_only_first_breakout_of_day_regardless_of_direction():
     assert len(res.trades) == 1
     assert res.trades.iloc[0]["reason"] == "SL"
     assert res.trades.iloc[0]["r"] == pytest.approx(-1.0)
+    assert {"range_ready", "signal", "entry", "exit", "daily_lock"} <= set(res.events.event)
+    locked = res.events[res.events.event == "daily_lock"].iloc[0]
+    assert locked.direction == "short"
 
 
 def test_cutoff_blocks_entry_bar_at_or_after_cutoff_hour():
@@ -263,6 +266,7 @@ def test_trend_filter_vetoes_and_consumes_direction():
     assert res.trades.empty
     d = res.days.set_index("date")
     assert d.loc[pd.Timestamp("2025-05-06").date(), "long"] == "filtered"
+    assert "Trend filter vetoed" in res.events.loc[res.events.event == "entry_rejected", "detail"].iloc[0]
 
 
 def test_midpoint_stop_mode():
@@ -274,6 +278,28 @@ def test_midpoint_stop_mode():
     trade = result.trades.iloc[0]
     assert trade.sl == pytest.approx(95.0)
     assert trade.risk_dist == pytest.approx(6.0)
+
+
+def test_entry_spread_and_minimum_stop_guards():
+    frame = bars(m15_day("2025-05-06", [
+        ("16:45", 95, 102, 94, 101), ("17:00", 101, 120, 100, 118),
+    ]), spread=125.0)  # recorded spread is in symbol points: 125 × 0.01 = 1.25
+    wide = run_backtest(frame, base_params(use_data_spread=True, max_spread=1.0))
+    assert wide.trades.empty
+    assert "spread too wide" in wide.days.iloc[0]["long"]
+    tight_stop = run_backtest(frame, base_params(stop_mode="midpoint", min_stop_points=800))
+    assert tight_stop.trades.empty
+    assert "stop too close" in tight_stop.days.iloc[0]["long"]
+
+
+def test_trade_excursions_are_reported_in_initial_r():
+    rows = m15_day("2025-05-06", [
+        ("16:45", 95, 99, 93, 96), ("17:00", 96, 102, 95, 101),
+        ("17:15", 101.5, 120, 101, 118),
+    ])
+    trade = run_backtest(bars(rows), base_params()).trades.iloc[0]
+    assert trade.mfe_r >= trade.r
+    assert trade.mae_r >= 0
 
 
 def test_range_vs_prior_window_filter():
@@ -358,6 +384,18 @@ def test_historical_range_multiplier_accepts_any_positive_decimal(multiplier, ex
                     range_percentile=50, range_multiplier=multiplier),
     )
     assert result.days.iloc[-1].orb_range == pytest.approx(expected_width)
+
+
+def test_forecast_range_does_not_look_at_current_opening_volume():
+    frame = bars(forecast_history_rows())
+    frame.loc[pd.Timestamp("2025-05-07 16:30"), "tick_volume"] = 1.0
+    result = run_backtest(
+        frame, base_params(range_mode="historical_percentile", range_history_sessions=2,
+                           vol_lookback=2, vol_spike_min=1000),
+    )
+    day = result.days.iloc[-1]
+    assert day.vol_ratio == 0
+    assert day.status == "no signal"
 
 
 def test_premarket_adjustment_expands_width_when_current_volatility_is_higher():
