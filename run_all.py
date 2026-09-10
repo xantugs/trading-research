@@ -2,9 +2,14 @@
 """One command: isolated setup, data, backtest, reports, checks and optional app.
 
 python run_all.py
-    Run QQQ in WRDS M1 mode from C:\\data\\wrds_m1 and open the app.
+    Run BOTH modes over 2018-2022 into one run directory, print an m1-vs-tick
+    comparison, and open the app on the tick result.
+python run_all.py --mode m1
+    Run only the WRDS M1 leg from C:\\data\\wrds_m1 over 2018-2022.
 python run_all.py --mode m1 --from 2018-01-01 --to 2019-01-01 --no-app
     Run an end-exclusive WRDS M1 period using only the M1 root.
+python run_all.py --mode m1 --full-history --no-app
+    Use every year present in the M1 root (2012-2024) instead of the default window.
 python run_all.py --mode tick --no-app
     Use only raw WRDS files under C:\\data\\wrds_ticks, deriving signal bars therefrom.
 python run_all.py --mode tick --from 2020-01-01 --to 2021-01-01 --no-app
@@ -16,9 +21,11 @@ python run_all.py --source csv --bars data/LOCAL_M1.csv --no-app
 from __future__ import annotations
 
 import argparse
+import copy
 import hashlib
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -30,6 +37,16 @@ ROOT = Path(__file__).resolve().parent
 DEFAULT_DUKASCOPY_START = "2022-01-01"
 DEFAULT_WRDS_M1_ROOT = Path(os.environ.get("ORB_WRDS_M1_ROOT", r"C:\data\wrds_m1"))
 DEFAULT_WRDS_TICK_ROOT = Path(os.environ.get("ORB_WRDS_TICK_ROOT", r"C:\data\wrds_ticks"))
+# The M1 root holds 2012-2024 but the raw tick archive covers 2018-2022 only. M1
+# mode clips to that window by default so the two modes describe the same period;
+# --full-history or explicit dates opt out.
+DEFAULT_WRDS_M1_START = os.environ.get("ORB_WRDS_M1_START", "2018-01-01")
+DEFAULT_WRDS_M1_END = os.environ.get("ORB_WRDS_M1_END", "2023-01-01")
+# US equities quote from 04:00 to 20:00 New York; 09:30-16:00 is the regular
+# session. The default window is every minute the market is open, so pre-market
+# and after-hours events are kept rather than discarded at build time.
+DEFAULT_SESSION_START = os.environ.get("ORB_SESSION_START", "04:00:00")
+DEFAULT_SESSION_END = os.environ.get("ORB_SESSION_END", "20:00:00")
 
 
 class Progress:
@@ -150,7 +167,7 @@ def _tick_source_signature(root: Path, args) -> str:
     digest.update((ROOT / "scripts/wrds_build_m1_local.py").read_bytes())
     digest.update(json.dumps({
         "symbol": args.symbol.upper(), "start": args.start, "end": args.end,
-        "start_time": "07:30:00", "end_time": "16:01:00",
+        "start_time": args.session_start, "end_time": args.session_end,
         "point": 0.01, "strategy_offset_hours": 7,
     }, sort_keys=True).encode())
     return digest.hexdigest()[:20]
@@ -174,7 +191,7 @@ def _prepare_tick_signal_bars(args) -> tuple[Path, dict]:
         start = date.fromisoformat(args.start) if args.start else None
         end = date.fromisoformat(args.end) if args.end else None
         build(root, staging, symbol=args.symbol.upper(), start=start, end=end,
-              start_time="07:30:00", end_time="16:01:00", point=0.01,
+              start_time=args.session_start, end_time=args.session_end, point=0.01,
               strategy_offset_hours=7)
         if cache.exists():
             raise ValueError(f"Incomplete tick-derived cache already exists: {cache}")
@@ -209,6 +226,36 @@ def _input_artifact(path: Path) -> dict:
         "name": resolved.name,
         "size_bytes": stat.st_size,
         "sha256": _sha256_file(resolved),
+    }
+
+
+_EXECUTION_CODE = re.compile(r"^skipped: ([a-z][a-z0-9_]*): ")
+
+
+def _unreplayable_executions(days) -> dict:
+    """Count signals the quote data could not support, grouped by failure code.
+
+    These are recorded rather than fatal, so a handful of thin sessions - half-days
+    especially, where a fixed eod_close lands hours after an early bell - cannot
+    abort a multi-hour replay. They are skipped, never filled at a stale price.
+    """
+    counts: dict[str, int] = {}
+    dates: list[str] = []
+    for column in ("long", "short"):
+        if column not in days:
+            continue
+        for day, value in zip(days.index, days[column]):
+            match = _EXECUTION_CODE.match(str(value))
+            if match is None:
+                continue
+            counts[match.group(1)] = counts.get(match.group(1), 0) + 1
+            label = str(day)[:10]
+            if label not in dates:
+                dates.append(label)
+    return {
+        "count": sum(counts.values()),
+        "by_code": dict(sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))),
+        "dates": sorted(dates),
     }
 
 
@@ -449,11 +496,11 @@ def pipeline(args) -> tuple[Path, Path | None]:
             latency_ms=args.tick_latency_ms,
             max_entry_delay_ms=args.tick_max_entry_delay_ms,
             max_eod_delay_ms=args.tick_max_eod_delay_ms,
-            strict=True,
+            strict=args.tick_strict,
         )
         execution = NbboExecution(store, execution_config)
         source.update(
-            execution_model="nbbo_top_of_book", execution_strict=True,
+            execution_model="nbbo_top_of_book", execution_strict=args.tick_strict,
             tick_latency_ms=args.tick_latency_ms,
             tick_max_entry_delay_ms=args.tick_max_entry_delay_ms,
             tick_max_eod_delay_ms=args.tick_max_eod_delay_ms,
@@ -475,6 +522,13 @@ def pipeline(args) -> tuple[Path, Path | None]:
             "dropped_crossed": sum(item.dropped_crossed for item in coverage),
             "duplicate_timestamps": sum(item.duplicate_timestamps for item in coverage),
         }
+        unreplayable = _unreplayable_executions(result.days)
+        quality["tick_execution"]["unreplayable"] = unreplayable
+        if unreplayable["count"]:
+            reasons = ", ".join(f"{code} x{n}" for code, n in unreplayable["by_code"].items())
+            print(f"Unreplayable executions: {unreplayable['count']} on "
+                  f"{len(unreplayable['dates'])} day(s) [{reasons}]. These signals were skipped, "
+                  "not filled; see quality.tick_execution.unreplayable in the report.", flush=True)
     source.update(file=data_path.name, sha256=file_hash(data_path), signal_minutes=args.tf)
     output = args.output or ROOT / "outputs" / datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S_%fZ")
     report = save_result(result, output, source, quality)
@@ -491,14 +545,22 @@ def _is_path_within(path: Path, root: Path) -> bool:
 
 def parse_args(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--mode", choices=["m1", "tick"],
-                    help="WRDS mode: M1 uses only the M1 root; tick uses only the raw tick root")
+    ap.add_argument("--mode", choices=["m1", "tick", "both"],
+                    help="WRDS mode: M1 uses only the M1 root, tick only the raw tick root, "
+                         "both runs each in turn into one run directory (default)")
+    ap.add_argument("--app-mode", choices=["m1", "tick"],
+                    help="With --mode both, which finished result the app opens (default: tick)")
     ap.add_argument("--source", choices=["auto", "demo", "dukascopy", "wrds", "csv"], default="wrds",
                     help="Data provider; default is WRDS QQQ M1 (demo and Dukascopy are explicit)")
     ap.add_argument("--from", dest="start",
-                    help=f"Start date (WRDS strategy clock; Dukascopy UTC default {DEFAULT_DUKASCOPY_START})")
+                    help=f"Start date (WRDS strategy clock; M1 default {DEFAULT_WRDS_M1_START}, "
+                         f"Dukascopy UTC default {DEFAULT_DUKASCOPY_START})")
     ap.add_argument("--to", dest="end",
-                    help="End-exclusive date; WRDS defaults to all coverage, Dukascopy to current UTC")
+                    help=f"End-exclusive date; M1 default {DEFAULT_WRDS_M1_END}, tick mode uses its "
+                         "whole root, Dukascopy the current UTC date")
+    ap.add_argument("--full-history", action="store_true",
+                    help="M1 mode: use every year in the M1 root instead of the default "
+                         f"[{DEFAULT_WRDS_M1_START}, {DEFAULT_WRDS_M1_END}) tick-comparable window")
     ap.add_argument("--symbol", default="USATECHIDXUSD")
     ap.add_argument("--tz", default="ny+7", help="UTC input -> strategy clock: ny+7, utc, +3")
     ap.add_argument("--scale", type=float)
@@ -511,12 +573,22 @@ def parse_args(argv=None):
     ap.add_argument("--bars", type=Path)
     ap.add_argument("--tick-root", type=Path,
                     help=f"Raw WRDS tick tree; tick mode default: {DEFAULT_WRDS_TICK_ROOT}")
+    ap.add_argument("--session-start", default=DEFAULT_SESSION_START,
+                    help=f"New York clock time the M1 window opens (default {DEFAULT_SESSION_START}, "
+                         "the start of pre-market)")
+    ap.add_argument("--session-end", default=DEFAULT_SESSION_END,
+                    help=f"End-exclusive New York clock time (default {DEFAULT_SESSION_END}, "
+                         "the end of after-hours)")
     ap.add_argument("--tick-latency-ms", type=float, default=0.0,
                     help="Assumed delay from order activation to NBBO eligibility")
     ap.add_argument("--tick-max-entry-delay-ms", type=float, default=1000.0,
                     help="Fail if the first valid entry quote arrives later")
     ap.add_argument("--tick-max-eod-delay-ms", type=float, default=1000.0,
                     help="Fail if the first valid EOD quote arrives later")
+    ap.add_argument("--tick-strict", action="store_true",
+                    help="Abort the whole run on the first execution the quotes cannot support. "
+                         "Off by default: such days are recorded and skipped so one thin session "
+                         "cannot kill a multi-hour replay")
     ap.add_argument("--tick-cache-days", type=int, default=2,
                     help="Maximum raw quote days retained in memory")
     ap.add_argument("--config", type=Path,
@@ -534,6 +606,7 @@ def parse_args(argv=None):
     ap.add_argument("--reinstall", action="store_true")
     ap.add_argument("--ea-log", type=Path, help="Reconcile local CSV against an EA log; requires --source csv")
     args = ap.parse_args(argv)
+    args.explicit_dates = bool(args.start or args.end)
     if args.mode:
         if args.source not in ("auto", "wrds"):
             ap.error("--mode can only be used with WRDS data")
@@ -544,21 +617,50 @@ def parse_args(argv=None):
         else:
             args.source = "wrds"
     if args.source == "wrds":
-        args.mode = args.mode or "m1"
-        if args.mode == "m1":
-            if args.tick_root is not None:
-                ap.error("M1 mode does not accept --tick-root")
+        args.mode = args.mode or "both"
+        if args.mode in ("m1", "both"):
             args.bars = args.bars or DEFAULT_WRDS_M1_ROOT
             if _is_path_within(args.bars, DEFAULT_WRDS_TICK_ROOT):
                 ap.error("M1 mode --bars cannot point at the WRDS tick root")
-        else:
-            if args.bars is not None:
-                ap.error("Tick mode does not accept --bars; it derives candles from the tick root")
+            if args.full_history:
+                if args.start or args.end:
+                    ap.error("--full-history cannot be combined with --from or --to")
+            else:
+                # Default to the window the raw tick archive covers, so an M1 run and a
+                # tick run of the same settings describe the same trading days.
+                args.start = args.start or DEFAULT_WRDS_M1_START
+                args.end = args.end or DEFAULT_WRDS_M1_END
+        elif args.bars is not None:
+            ap.error("Tick mode does not accept --bars; it derives candles from the tick root")
+        if args.mode in ("tick", "both"):
             args.tick_root = args.tick_root or DEFAULT_WRDS_TICK_ROOT
             if _is_path_within(args.tick_root, DEFAULT_WRDS_M1_ROOT):
                 ap.error("Tick mode --tick-root cannot point at the WRDS M1 root")
-    elif args.tick_root is not None:
-        ap.error("--tick-root requires --mode tick")
+        elif args.tick_root is not None:
+            ap.error("M1 mode does not accept --tick-root")
+        if args.mode == "tick" and args.full_history:
+            ap.error("--full-history applies to the M1 leg; tick mode already uses its whole root")
+        if args.app_mode and args.mode != "both":
+            ap.error("--app-mode requires --mode both")
+        if args.mode == "both":
+            args.app_mode = args.app_mode or "tick"
+            if args.ea_log:
+                ap.error("--ea-log needs one explicit mode")
+    else:
+        if args.app_mode is not None:
+            ap.error("--app-mode requires WRDS --mode both")
+        if args.tick_root is not None:
+            ap.error("--tick-root requires --mode tick")
+        if args.full_history:
+            ap.error("--full-history requires WRDS M1 mode")
+
+    for flag, value in (("--session-start", args.session_start), ("--session-end", args.session_end)):
+        try:
+            datetime.strptime(value, "%H:%M:%S")
+        except ValueError:
+            ap.error(f"{flag} must be HH:MM:SS New York clock time")
+    if args.session_end <= args.session_start:
+        ap.error("--session-end must be later than --session-start")
     if args.demo_days < 1:
         ap.error("--demo-days must be positive")
     if not 1 <= args.port <= 65535:
@@ -634,6 +736,75 @@ def app_environment(args, data_path: Path, output: Path) -> dict[str, str]:
     return env
 
 
+def leg_args(args, mode: str, output: Path):
+    """Clone the parsed arguments for one concrete leg of a --mode both run."""
+    leg = copy.copy(args)
+    leg.mode = mode
+    leg.app_mode = None
+    leg.output = output
+    leg.check = False
+    leg.compile_mt5 = False
+    leg.no_install = True
+    leg.reinstall = False
+    leg.session_start = args.session_start
+    leg.session_end = args.session_end
+    leg.tick_strict = args.tick_strict
+    if mode == "m1":
+        leg.tick_root = None
+    else:
+        leg.bars = None
+        # The tick root defines the tick leg's own span; the M1 window must not clip it.
+        if not args.explicit_dates:
+            leg.start = None
+            leg.end = None
+    return leg
+
+
+def run_both(args) -> tuple[Path, Path, dict[str, Path]]:
+    """Run the M1 leg then the tick leg into one timestamped run directory."""
+    parent = args.output or ROOT / "outputs" / datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S_%fZ")
+    if parent.exists() and any(parent.iterdir()):
+        raise ValueError(f"Run directory already exists and is not empty: {parent}")
+    legs, outputs = {}, {}
+    for mode in ("m1", "tick"):
+        print(f"\n=== {mode} mode ===", flush=True)
+        leg = leg_args(args, mode, parent / mode)
+        data_path, output = pipeline(leg)
+        if output is None:
+            raise ValueError(f"{mode} leg produced no report")
+        legs[mode] = leg
+        outputs[mode] = (data_path, output)
+    _print_mode_comparison(outputs)
+    chosen = args.app_mode or "tick"
+    data_path, output = outputs[chosen]
+    print(f"\nApp opens the {chosen} result; both bundles are under {parent.resolve()}", flush=True)
+    return data_path, output, {"leg": legs[chosen]}
+
+
+def _print_mode_comparison(outputs: dict) -> None:
+    """Show the two modes side by side; the difference is the execution model."""
+    rows = []
+    for mode, (_, output) in outputs.items():
+        try:
+            stats = json.loads((output / "stats.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        rows.append((mode, stats))
+    if len(rows) != 2:
+        return
+    print("\n=== m1 vs tick ===", flush=True)
+    print(f"{'metric':<24}{'m1':>14}{'tick':>14}{'delta':>14}")
+    for key, label, fmt in (("trades", "trades", "{:.0f}"),
+                            ("total_r", "gross R", "{:+.2f}"),
+                            ("return_pct", "closed-balance %", "{:+.2f}")):
+        try:
+            a = float(rows[0][1][key])
+            b = float(rows[1][1][key])
+        except (KeyError, TypeError, ValueError):
+            continue
+        print(f"{label:<24}{fmt.format(a):>14}{fmt.format(b):>14}{fmt.format(b - a):>14}")
+
+
 def main() -> int:
     if not (3, 11) <= sys.version_info[:2] < (3, 14):
         print("Python 3.11, 3.12 or 3.13 is required.", file=sys.stderr)
@@ -650,7 +821,12 @@ def main() -> int:
         if args.check:
             command([sys.executable, "-m", "ruff", "check", "."])
             command([sys.executable, "-m", "pytest", "-q"])
-        data_path, output = pipeline(args)
+        app_args = args
+        if args.mode == "both":
+            data_path, output, extra = run_both(args)
+            app_args = extra["leg"]
+        else:
+            data_path, output = pipeline(args)
         if output is None:
             return 0
         if args.ea_log:
@@ -661,7 +837,7 @@ def main() -> int:
                      "--strict", "--spread", str(p.spread), "--point", str(p.point),
                      *(["--use-data-spread"] if p.use_data_spread else [])])
         if not args.no_app:
-            env = app_environment(args, data_path, output)
+            env = app_environment(app_args, data_path, output)
             print(f"App: http://localhost:{args.port} (Ctrl+C to stop)", flush=True)
             command([sys.executable, "-m", "streamlit", "run", "app.py",
                      "--server.address=localhost", f"--server.port={args.port}"], env=env)

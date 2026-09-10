@@ -65,10 +65,20 @@ one gzip CSV and manifest under `orb_m1_years_0730/YEAR/`. Progress is written
 to the SGE output log. Tables before 2018 do not expose `time_m_nano`; the
 builder detects this and falls back to `time_m` ordering.
 
-The current builder begins at **07:30 New York time**, providing the full two
-hours before a 09:30 opening range. An older 08:30 export can still run setups
-that need at most one pre-open hour; a two-hour range-ratio filter must reject
-its incomplete lookback.
+The builder now covers **04:00 to 20:00 New York time** - pre-market open through
+after-hours close, every minute US equities quote. Earlier exports were narrower
+(07:30-16:01, and before that 08:30) and are **not interchangeable**: an 08:30
+file has one fewer hour per day than a 07:30 file, which shows up as roughly 60
+missing M1 bars per trading day and silently starves any filter that needs a
+two-hour pre-open lookback.
+
+`wrds_submit_years.sh` passes the window explicitly, so the WRDS Cloud export and
+the local `wrds_build_m1_local.py` rebuild cannot drift apart. Override both with
+`ORB_SESSION_START` / `ORB_SESSION_END`, or `--start-time` / `--end-time` when
+calling a builder directly.
+
+**A year exported under an older window must be rebuilt**, not mixed in. Compare
+`source_start_time` in each year's `manifest.json` before trusting a set.
 
 ## Export raw ticks on WRDS Cloud
 

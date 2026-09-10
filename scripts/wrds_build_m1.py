@@ -141,9 +141,10 @@ def parse_args(argv=None):
     parser.add_argument("--from", dest="start", type=date.fromisoformat, required=True)
     parser.add_argument("--to", dest="end", type=date.fromisoformat, required=True,
                         help="End-exclusive date")
-    parser.add_argument("--start-time", default="07:30:00",
-                        help="New York start; 07:30 supplies two hours before the 09:30 range")
-    parser.add_argument("--end-time", default="16:01:00")
+    parser.add_argument("--start-time", default="04:00:00",
+                        help="New York start; 04:00 is the pre-market open")
+    parser.add_argument("--end-time", default="20:00:00",
+                        help="End-exclusive New York time; 20:00 is the after-hours close")
     parser.add_argument("--point", type=float, default=0.01)
     parser.add_argument("--strategy-offset-hours", type=int, default=7,
                         help="Add to New York wall time; 7 maps 09:30 to strategy 16:30")

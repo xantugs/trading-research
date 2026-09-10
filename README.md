@@ -10,19 +10,29 @@ reconciliation are still required. This repository does not establish a trading 
 
 ## Run QQQ research
 
-Install **Python 3.11–3.13**, open a terminal in this folder, and choose one
-explicit WRDS mode. M1 mode reads only `C:\data\wrds_m1`:
+Install **Python 3.11–3.13**, open a terminal in this folder, and run:
 
 ```sh
-python run_all.py --mode m1
+python run_all.py
 ```
 
-Tick mode reads only `C:\data\wrds_ticks`, derives its own M1 bars and M15
-signal candles from those events, and replays ordered top-of-book NBBO quotes:
+That runs **both** WRDS modes over 2018-2022 into a single timestamped run
+directory, prints an m1-vs-tick comparison, and opens the app on the tick result.
+No paths, no flags.
+
+M1 mode reads only `C:\data\wrds_m1`. Tick mode reads only `C:\data\wrds_ticks`,
+derives its own M1 bars and M15 signal candles from those events, and replays
+ordered top-of-book NBBO quotes. Run either alone when you want one:
 
 ```sh
-python run_all.py --mode tick --from 2018-01-01 --to 2023-01-01
+python run_all.py --mode m1        # fast; bar-path exits
+python run_all.py --mode tick      # slower; event-level fills
 ```
+
+The tick leg replays every quote for 1,259 trading days, so `--mode both` takes
+as long as the tick leg does. The M1 leg runs first and its bundle is written
+before the tick leg starts, so a slow or interrupted tick replay never costs you
+the M1 result. `--app-mode m1` opens the app on the M1 result instead.
 
 The launcher creates a local `.venv`, installs the project, runs the backtest,
 writes a report bundle under `outputs/`, and serves ORB Lab at
@@ -34,11 +44,50 @@ The modes are intentionally separate. M1 mode rejects a tick root. Tick mode
 rejects an M1 bar path and never falls back to `C:\data\wrds_m1`; its derived-bar
 cache is keyed to the raw tick tree and is only a signal-building artifact.
 
+**Both modes default to the same period.** The M1 root holds 2012-2024 but the raw
+tick archive covers 2018-2022, so M1 mode clips to `[2018-01-01, 2023-01-01)` by
+default and the two modes describe the same trading days. Pass `--from` / `--to`
+for any other window, or `--full-history` to use every year in the M1 root:
+
+```sh
+python run_all.py --mode m1 --full-history --no-app
+```
+
+**Executions the quotes cannot support are recorded, not fatal.** About fifteen
+days in 2018-2022 are half-days closing at 13:00 - the July 3rds, the Fridays
+after Thanksgiving, the Christmas Eves - and a fixed `eod_close` of 15:45 lands
+hours into thin after-hours quoting there. Rather than fill at a stale price or
+abort a two-hour replay, those signals are skipped and reported:
+
+```
+Unreplayable executions: 15 on 15 day(s) [eod_quote_delayed x15]. These signals
+were skipped, not filled; see quality.tick_execution.unreplayable in the report.
+```
+
+The full list of dates and failure codes lands in the report bundle. Pass
+`--tick-strict` to restore fail-fast behaviour when you are debugging one day.
+
+**The M1 window is the whole quoting day.** Both builders cover 04:00-20:00 New
+York - pre-market, regular session and after-hours - so nothing the market
+actually quoted is discarded at build time. `--session-start` / `--session-end`
+narrow it, and `ORB_SESSION_START` / `ORB_SESSION_END` do the same from the
+environment. Changing the window changes the derived-candle cache key, so a
+narrower run never reuses wider candles.
+
+Tick mode is not clipped — its root defines its own span, so extending the archive
+widens tick runs automatically. `ORB_WRDS_M1_START` and `ORB_WRDS_M1_END` override
+the default window without touching the command line.
+
 | Task | Command |
 | --- | --- |
-| QQQ M1 backtest and app | `python run_all.py --mode m1` |
+| Both modes, comparison and app (2018-2022) | `python run_all.py` |
+| Both modes, no app | `python run_all.py --no-app` |
+| Both modes, app opens the M1 result | `python run_all.py --app-mode m1` |
+| QQQ M1 backtest and app (2018-2022) | `python run_all.py --mode m1` |
 | QQQ M1 report only | `python run_all.py --mode m1 --no-app` |
-| Full available QQQ tick period | `python run_all.py --mode tick --from 2018-01-01 --to 2023-01-01 --no-app` |
+| QQQ M1 over every year in the root (2012-2024) | `python run_all.py --mode m1 --full-history --no-app` |
+| One M1 year | `python run_all.py --mode m1 --from 2022-01-01 --to 2023-01-01 --no-app` |
+| Full available QQQ tick period | `python run_all.py --mode tick --no-app` |
 | January 2018 tick smoke test | `python run_all.py --mode tick --from 2018-01-01 --to 2018-02-01 --no-app` |
 | Custom M1 root | `python run_all.py --mode m1 --bars C:\data\wrds_m1 --no-app` |
 | Custom tick root | `python run_all.py --mode tick --tick-root C:\data\wrds_ticks --no-app` |

@@ -208,8 +208,8 @@ def aggregate_quotes(path: Path, day: date, start_time: pd.Timedelta,
 
 
 def build_day(trade_path: Path, quote_path: Path, day: date, point: float,
-              strategy_offset_hours: int = 7, start_time: str = "07:30:00",
-              end_time: str = "16:01:00") -> tuple[pd.DataFrame, dict]:
+              strategy_offset_hours: int = 7, start_time: str = "04:00:00",
+              end_time: str = "20:00:00") -> tuple[pd.DataFrame, dict]:
     """Build one day and return canonical-plus-diagnostic M1 rows and provenance."""
     start_delta = _wall_time(start_time)
     end_delta = _wall_time(end_time, end=True)
@@ -261,7 +261,7 @@ def _write_json(value: dict, path: Path, force: bool) -> None:
 
 
 def build(root: Path, output_dir: Path, symbol: str = "QQQ", start: date | None = None,
-          end: date | None = None, start_time: str = "07:30:00", end_time: str = "16:01:00",
+          end: date | None = None, start_time: str = "04:00:00", end_time: str = "20:00:00",
           point: float = 0.01, strategy_offset_hours: int = 7, force: bool = False) -> dict:
     """Build all selected days, monthly outputs, yearly outputs, and manifests."""
     pairs = discover_pairs(root, symbol, start, end)
@@ -370,8 +370,8 @@ def parse_args(argv=None):
     parser.add_argument("--symbol", default="QQQ")
     parser.add_argument("--from", dest="start", type=date.fromisoformat)
     parser.add_argument("--to", dest="end", type=date.fromisoformat, help="End-exclusive date")
-    parser.add_argument("--start-time", default="07:30:00")
-    parser.add_argument("--end-time", default="16:01:00")
+    parser.add_argument("--start-time", default="04:00:00")
+    parser.add_argument("--end-time", default="20:00:00")
     parser.add_argument("--point", type=float, default=0.01)
     parser.add_argument("--strategy-offset-hours", type=int, default=7)
     parser.add_argument("--force", action="store_true")

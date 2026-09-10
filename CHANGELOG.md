@@ -5,6 +5,39 @@
 - Added strict, non-overlapping `m1` and `tick` runner modes. M1 reads only the
   external WRDS M1 root; tick reads only the raw WRDS tree and derives its own
   M1 and signal candles.
+- Sped the NBBO quote decode up roughly **9x** (about 9,550 ms per day to 1,085
+  on a synthetic 900k-row day). `time_m` arrives from Parquet as timedelta64, and
+  the ASCII fast parser was rendering it to a string per row first - a per-element
+  Python formatter that cost around twenty times the parse it fed. Typed columns
+  now go straight from nanoseconds to timestamps; the ASCII path is unchanged for
+  string sources, and a test asserts the two agree row for row. A prefetch thread
+  pool was tried and removed: 1.11x at four workers, slower at eight.
+- Made an execution the quote data cannot support **recorded rather than fatal**.
+  A fixed 15:45 `eod_close` lands hours after the 13:00 bell on the ~15 half-days
+  in 2018-2022, where the next NBBO update can be over a minute away; that used to
+  abort the entire replay partway through. Such signals are now skipped, counted
+  by failure code with their dates in `quality.tick_execution.unreplayable`, and
+  summarised on stdout. `--tick-strict` restores fail-fast for debugging. Nothing
+  is ever filled at a stale quote either way.
+- Widened the default M1 window to **04:00-20:00 New York**, every minute US
+  equities quote, instead of 07:30-16:01. Pre-market and after-hours events are
+  now kept rather than discarded at build time. `--session-start` /
+  `--session-end` and `ORB_SESSION_START` / `ORB_SESSION_END` override it, both
+  builders share the same defaults, and `wrds_submit_years.sh` passes the window
+  explicitly so the WRDS Cloud export and the local rebuild cannot drift.
+  **M1 years exported under an older window must be rebuilt**: an 08:30 export
+  carries roughly 60 fewer bars per day than a 07:30 one.
+- Made `python run_all.py` with no arguments run **both** modes: the M1 leg
+  first, then the tick leg, into `<run>/m1` and `<run>/tick`, followed by a
+  side-by-side trades / gross-R / return comparison. The app opens the tick
+  result; `--app-mode m1` opens the other. `--mode m1` or `--mode tick` still
+  run one leg alone, and the no-overlap guarantees are unchanged - each leg is
+  handed only its own root.
+- Defaulted M1 mode to `[2018-01-01, 2023-01-01)`, the span the raw tick archive
+  covers, so an M1 run and a tick run of the same settings describe the same
+  trading days. `--from`/`--to`, `--full-history` and the `ORB_WRDS_M1_START` /
+  `ORB_WRDS_M1_END` environment variables override it. Tick mode stays governed
+  by its own root so a wider archive is picked up automatically.
 - Added a parity-tested local raw-event builder matching the WRDS Cloud M1
   definition for best-bid OHLC, eligible trade/share volume, quote counts and
   p50/p95 spread statistics.

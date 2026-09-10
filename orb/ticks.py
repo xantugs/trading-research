@@ -67,6 +67,42 @@ def _wrds_timestamps(raw: pd.DataFrame) -> pd.Series:
     return stamps
 
 
+def _day_is_expected(raw: pd.DataFrame, source_date: date) -> np.ndarray:
+    """Row mask for `date` matching the file's declared source date."""
+    return (raw["date"].astype("string").str.strip()
+            .eq(source_date.isoformat()).fillna(False).to_numpy())
+
+
+def _timedelta_day_timestamps(raw: pd.DataFrame, column: pd.Series,
+                              source_date: date) -> pd.Series:
+    """Vectorised timestamps for an already-typed timedelta `time_m` column.
+
+    Produces exactly what the ASCII parser produces for the same values, without
+    materialising a string per row.
+    """
+    count = len(raw)
+    elapsed = column.to_numpy(dtype="timedelta64[ns]")
+    valid = ~np.isnat(elapsed)
+    elapsed_ns = np.where(valid, elapsed.astype("int64"), 0)
+    valid &= (elapsed_ns >= 0) & (elapsed_ns < 86_400 * 1_000_000_000)
+
+    if "time_m_nano" in raw:
+        nano_values = pd.to_numeric(raw["time_m_nano"], errors="coerce").to_numpy(
+            dtype=float, na_value=np.nan)
+        nano_missing = ~np.isfinite(nano_values)
+        valid &= nano_missing | ((nano_values >= 0) & (nano_values <= 999)
+                                 & (nano_values == np.floor(nano_values)))
+        nanos = np.where(nano_missing, 0, nano_values).astype(np.int64)
+    else:
+        nanos = np.zeros(count, dtype=np.int64)
+
+    valid &= _day_is_expected(raw, source_date)
+    values = np.full(count, np.datetime64("NaT", "ns"), dtype="datetime64[ns]")
+    values[valid] = (np.datetime64(source_date.isoformat(), "ns")
+                     + (elapsed_ns[valid] + nanos[valid]).astype("timedelta64[ns]"))
+    return pd.Series(values, index=raw.index)
+
+
 def _wrds_day_timestamps(raw: pd.DataFrame, source_date: date) -> pd.Series:
     """Fast validated timestamp parser for one WRDS daily Parquet file.
 
@@ -76,7 +112,14 @@ def _wrds_day_timestamps(raw: pd.DataFrame, source_date: date) -> pd.Series:
     Rows outside either shape remain NaT and are counted by the caller.
     """
     count = len(raw)
-    encoded = raw["time_m"].fillna("").astype(str).to_numpy(dtype="S15")
+    column = raw["time_m"]
+    if pd.api.types.is_timedelta64_dtype(column):
+        # WRDS Parquet usually lands here: a Postgres `time` becomes timedelta64.
+        # Rendering it to ASCII first invokes a per-row Python formatter, roughly
+        # twenty times the cost of the parse it feeds, so read the nanoseconds
+        # straight out of the array instead.
+        return _timedelta_day_timestamps(raw, column, source_date)
+    encoded = column.fillna("").astype(str).to_numpy(dtype="S15")
     chars = encoded.view(np.uint8).reshape(count, 15)
     digit_positions = (0, 1, 3, 4, 6, 7)
     base_digits = np.ones(count, dtype=bool)
@@ -106,8 +149,7 @@ def _wrds_day_timestamps(raw: pd.DataFrame, source_date: date) -> pd.Series:
                                  & (nano_values == np.floor(nano_values)))
     nano_values = np.where(nano_missing, 0, nano_values).astype(np.int64)
 
-    dates = raw["date"].astype("string").str.strip()
-    date_valid = dates.eq(source_date.isoformat()).fillna(False).to_numpy()
+    date_valid = _day_is_expected(raw, source_date)
     valid = clock_valid & nano_valid & date_valid
     elapsed = ((hour * 3600 + minute * 60 + second) * 1_000_000_000
                + microseconds * 1_000 + nano_values)

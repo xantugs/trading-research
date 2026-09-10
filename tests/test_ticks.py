@@ -151,3 +151,62 @@ def test_tick_store_never_falls_back_to_a_sibling_m1_root(tmp_path):
     with pytest.raises(FileNotFoundError) as error:
         store.load_day("2018-03-01")
     assert str(tick_root) in str(error.value)
+
+
+def test_timedelta_fast_path_matches_the_ascii_parser():
+    """The typed shortcut must agree with the string parser on every row.
+
+    WRDS Parquet gives `time_m` as timedelta64; older/other sources give ASCII.
+    Both go through _wrds_day_timestamps, so the two must not disagree.
+    """
+    from datetime import date
+
+    from orb.ticks import _wrds_day_timestamps
+
+    day = date(2020, 1, 6)
+    clocks = [
+        "09:30:00",            # exact second
+        "09:30:00.123456",     # full microseconds
+        "16:00:00.000001",     # one microsecond past the hour
+        "04:00:00.500000",     # pre-market
+        "19:59:59.999999",     # last after-hours microsecond
+        None,                  # missing time
+        "12:00:00.000000",     # wrong date row
+        "12:00:00.000000",     # nano out of range
+        "12:00:00.000000",     # fractional nano
+        "12:00:00.000000",     # missing nano
+    ]
+    nanos = [0, 900, 1, 500, 999, 0, 0, 1000, 1.5, None]
+    dates = [day.isoformat()] * len(clocks)
+    dates[6] = "2020-01-07"
+
+    as_text = pd.DataFrame({"date": dates, "time_m": clocks, "time_m_nano": nanos})
+    as_delta = as_text.assign(time_m=pd.to_timedelta(pd.Series(clocks)))
+
+    assert pd.api.types.is_timedelta64_dtype(as_delta["time_m"])
+    text_stamps = _wrds_day_timestamps(as_text, day)
+    delta_stamps = _wrds_day_timestamps(as_delta, day)
+    pd.testing.assert_series_equal(text_stamps, delta_stamps)
+
+    # And the values themselves are right, not merely equal to each other.
+    assert delta_stamps[0] == pd.Timestamp("2020-01-06 09:30:00")
+    assert delta_stamps[1] == pd.Timestamp("2020-01-06 09:30:00.123456900")
+    assert delta_stamps[4] == pd.Timestamp("2020-01-06 19:59:59.999999999")
+    for rejected in (5, 6, 7, 8):
+        assert pd.isna(delta_stamps[rejected]), f"row {rejected} should be NaT"
+    assert delta_stamps[9] == pd.Timestamp("2020-01-06 12:00:00")
+
+
+def test_timedelta_fast_path_rejects_out_of_day_offsets():
+    from datetime import date
+
+    from orb.ticks import _wrds_day_timestamps
+
+    day = date(2020, 1, 6)
+    frame = pd.DataFrame({
+        "date": [day.isoformat()] * 3,
+        "time_m": pd.to_timedelta(["-1s", "23:59:59.999999", "25:00:00"]),
+    })
+    stamps = _wrds_day_timestamps(frame, day)
+    assert pd.isna(stamps[0]) and pd.isna(stamps[2])
+    assert stamps[1] == pd.Timestamp("2020-01-06 23:59:59.999999")

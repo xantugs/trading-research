@@ -15,4 +15,6 @@ python3 wrds_build_m1.py \
   --symbol QQQ \
   --from "${year}-01-01" \
   --to "${next_year}-01-01" \
+  --start-time "${ORB_SESSION_START:-04:00:00}" \
+  --end-time "${ORB_SESSION_END:-20:00:00}" \
   --output-dir "${output_root}/${year}"

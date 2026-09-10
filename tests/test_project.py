@@ -13,6 +13,8 @@ from orb.reporting import quality_report, save_result
 from orb.synthetic import make_synthetic_m1
 from reconcile import parse_ea_header, tf_minutes
 from run_all import (
+    DEFAULT_WRDS_M1_END,
+    DEFAULT_WRDS_M1_START,
     DEFAULT_DUKASCOPY_START, DEFAULT_WRDS_M1_ROOT, DEFAULT_WRDS_TICK_ROOT, parse_args,
 )
 
@@ -123,14 +125,14 @@ def test_wrds_source_defaults_to_qqq():
     assert args.symbol == "QQQ"
     assert args.config == ROOT / "configs/qqq.json"
     defaulted = parse_args(["--source", "wrds"])
-    assert defaulted.mode == "m1" and defaulted.bars == DEFAULT_WRDS_M1_ROOT
+    assert defaulted.mode == "both" and defaulted.bars == DEFAULT_WRDS_M1_ROOT
 
 
-def test_launcher_no_arguments_defaults_to_wrds_qqq_m1():
+def test_launcher_no_arguments_runs_both_wrds_qqq_modes():
     args = parse_args([])
-    assert args.source == "wrds" and args.mode == "m1"
+    assert args.source == "wrds" and args.mode == "both" and args.app_mode == "tick"
     assert args.symbol == "QQQ" and args.bars == DEFAULT_WRDS_M1_ROOT
-    assert args.start is None and args.end is None
+    assert args.start == DEFAULT_WRDS_M1_START and args.end == DEFAULT_WRDS_M1_END
     assert parse_args(["--source", "auto"]).source == "wrds"
 
 
