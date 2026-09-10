@@ -12,7 +12,9 @@ from orb.config import load_params
 from orb.reporting import quality_report, save_result
 from orb.synthetic import make_synthetic_m1
 from reconcile import parse_ea_header, tf_minutes
-from run_all import DEFAULT_DUKASCOPY_START, parse_args
+from run_all import (
+    DEFAULT_DUKASCOPY_START, DEFAULT_WRDS_M1_ROOT, DEFAULT_WRDS_TICK_ROOT, parse_args,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -107,7 +109,7 @@ def test_dukascopy_one_flag_has_research_defaults():
     assert args.start == DEFAULT_DUKASCOPY_START
     assert args.symbol == "USATECHIDXUSD"
     assert args.tz == "ny+7"
-    assert args.end
+    assert args.end == pd.Timestamp.now(tz="UTC").date().isoformat()
 
 
 def test_auto_source_with_explicit_bars_becomes_csv():
@@ -120,6 +122,47 @@ def test_wrds_source_defaults_to_qqq():
     args = parse_args(["--source", "wrds", "--bars", "data/wrds/years"])
     assert args.symbol == "QQQ"
     assert args.config == ROOT / "configs/qqq.json"
+    defaulted = parse_args(["--source", "wrds"])
+    assert defaulted.mode == "m1" and defaulted.bars == DEFAULT_WRDS_M1_ROOT
+
+
+def test_launcher_no_arguments_defaults_to_wrds_qqq_m1():
+    args = parse_args([])
+    assert args.source == "wrds" and args.mode == "m1"
+    assert args.symbol == "QQQ" and args.bars == DEFAULT_WRDS_M1_ROOT
+    assert args.start is None and args.end is None
+    assert parse_args(["--source", "auto"]).source == "wrds"
+
+
+def test_wrds_modes_have_separate_default_roots():
+    m1 = parse_args(["--mode", "m1"])
+    assert m1.source == "wrds" and m1.mode == "m1"
+    assert m1.bars == DEFAULT_WRDS_M1_ROOT and m1.tick_root is None
+
+    tick = parse_args(["--mode", "tick"])
+    assert tick.source == "wrds" and tick.mode == "tick"
+    assert tick.tick_root == DEFAULT_WRDS_TICK_ROOT and tick.bars is None
+    assert tick.start is None and tick.end is None
+
+
+def test_wrds_modes_reject_overlapping_input_roots():
+    with pytest.raises(SystemExit):
+        parse_args(["--mode", "tick", "--bars", "C:/data/wrds_m1"])
+    with pytest.raises(SystemExit):
+        parse_args(["--mode", "m1", "--tick-root", "C:/data/wrds_ticks"])
+    with pytest.raises(SystemExit):
+        parse_args(["--mode", "m1", "--bars", str(DEFAULT_WRDS_TICK_ROOT)])
+    with pytest.raises(SystemExit):
+        parse_args(["--mode", "tick", "--tick-root", str(DEFAULT_WRDS_M1_ROOT)])
+    with pytest.raises(SystemExit):
+        parse_args(["--mode", "m1", "--bars", str(DEFAULT_WRDS_TICK_ROOT / "2020")])
+
+
+def test_launcher_rejects_invalid_or_reversed_date_bounds():
+    with pytest.raises(SystemExit):
+        parse_args(["--mode", "m1", "--from", "2020/01/01"])
+    with pytest.raises(SystemExit):
+        parse_args(["--mode", "m1", "--from", "2020-02-01", "--to", "2020-02-01"])
 
 
 def test_qqq_config_uses_equity_and_recorded_spread_semantics():

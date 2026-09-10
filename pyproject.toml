@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "orb-backtest"
-version = "1.5.0"
+version = "1.6.0"
 description = "Opening Range Breakout research kit for Python and MetaTrader 5"
 readme = "README.md"
 license = "MIT"

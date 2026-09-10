@@ -1,45 +1,54 @@
 # Research and engineering roadmap
 
-## Release 1.5 readiness
+## Release 1.6 readiness
 
-- Project packaging, one-command setup/pipeline, strict configuration.
-- Cached Dukascopy M1 download and optional streaming tick archive.
-- Data-clock conversion, validation, missing-range diagnostics and manifests.
-- CSV/JSON/offline-HTML reports; Streamlit data and upload fixes.
-- Expanded regression tests, CI, compiler helper and stricter reconciliation.
-- EA compiles locally; visual broker smoke test still pending.
-- Live Dukascopy verification pending after the feed timeout on this machine.
-- WRDS TAQ raw extraction and cloud-side M1 aggregation validated on QQQ.
+- QQQ is the primary research instrument, with WRDS M1 for 2012–2024 and raw
+  trade/complete-NBBO events for 2018–2022 available locally.
+- Strict M1 and tick modes use separate external roots and have no cross-root
+  fallback or overlap.
+- The tick root builds its own parity-checked M1 and default M15 signal candles;
+  ordered top-of-book NBBO replays close-confirmed fixed-exit trades.
+- Five incomplete opening-range dates are excluded and documented instead of
+  being filled or silently shortened.
+- Project packaging, one-command setup, strict configuration, reports, dark
+  Streamlit workspace, tests, CI, compiler helper and reconciliation are in place.
 - Historical/adaptive opening-range forecasts, multi-candle confirmation,
-  midpoint stop, range-proportion and lagged MA-slope filters in Python and EA v1.40.
-- Decision audit trail, MFE/MAE, tick overlays, data-quality workspace,
-  bootstrap, local stability grid and expanding yearly walk-forward.
-- MT5 rule parity compiles locally; broker real-tick reconciliation remains pending.
+  midpoint stop, range-proportion and lagged MA-slope filters are implemented in
+  Python and EA v1.40.
+- EA v1.40 compiles locally; visual broker smoke testing and same-instrument
+  reconciliation remain pending.
 
 ## Next evidence to collect
 
-1. Download a short real sample, verify the price scale and DST alignment.
-2. Run one month in the MT5 visual tester and hand-check ten trades.
-3. Fetch the same broker data and reconcile with management off.
-4. Add commission and realistic spread/slippage sensitivities; compare EOD.
-5. Reserve 2022 as a separate regime check, compare other index CFDs, and
-   inspect broad parameter plateaus. Use an untouched forward period.
-6. Record sample definitions and costs before comparing results; preserve each
-   manifest and avoid selecting the best parameters on the final test period.
+1. Run all 2018–2022 raw dates through strict tick mode and preserve the result
+   manifest, execution audit, wall time and cache size.
+2. Compare M1 and tick results over identical dates and settings. Separate
+   signal differences from entry price, exit order and quote-coverage effects.
+3. Measure how often `sl_first` changes the M1 outcome and replace that
+   assumption with observed NBBO ordering where strict replay is supported.
+4. Test commission, latency, delayed-quote and leverage sensitivities before
+   interpreting any performance result.
+5. Define development, validation and untouched holdout periods before changing
+   strategy parameters; preserve every experiment manifest.
+6. Check whether the intended MT5 broker lists QQQ. If it does, fetch matching
+   broker data and reconcile with management off; if it does not, keep the TAQ
+   equity model and CFD EA tests labeled as different instruments.
 
-## WRDS next
+## WRDS follow-up
 
-Download and validate the completed 2012–2024 QQQ M1 history and the 2018–2022
-raw archive. M1 runs now use whole shares, recorded spread and a gross-notional
-cap. Next, build a lazy per-day NBBO quote store with nanosecond ordering and an
-explicit New-York-to-strategy-clock conversion. Use the exported
-`same_bar_ambiguous` timestamps to measure actual SL-first/TP-first ordering,
-then expand exact quote replay to entries and all exits. Keep QQQ equity results
-separately labeled from Dukascopy CFD and MT5 broker experiments.
+The data transfer, footer verification, cloud M1 build, local parity builder,
+raw-derived signal path and milestone-one NBBO executor are complete. Remaining
+work is empirical validation: complete-period replay, M1-versus-tick attribution,
+coverage-delay distributions and cost assumptions. The current local M1 years
+have no sibling manifests, so result provenance records that warning; a future
+re-export can restore per-year source checksums without blocking research.
 
 ## Deliberate later features
 
-- Exact tick-driven execution and MT5 custom-tick export.
+- Immediate-entry, breakeven and trailing support in the strict tick executor.
+- Marketable-order depth, queue, partial-fill and market-impact models where a
+  suitable dataset and explicit assumptions exist.
+- MT5 custom-tick export and broker-specific trigger semantics.
 - Multi-candle opening ranges and venue/session calendars.
 - Partial targets and explicit netting-account rules.
 - Intratrade equity and consistent daily-return performance statistics.

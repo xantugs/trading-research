@@ -1,4 +1,4 @@
-"""Interactive dark research workspace for the ORB bar engine."""
+"""Interactive dark workspace for ORB bar signals and optional NBBO execution."""
 from __future__ import annotations
 
 import hashlib
@@ -16,7 +16,18 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import streamlit as st
 
-from orb import Params, infer_minutes, load_bars, load_ticks, resample, run_backtest, tick_quality
+from orb import (
+    NbboExecution,
+    NbboExecutionConfig,
+    Params,
+    TickStore,
+    infer_minutes,
+    load_bars,
+    load_ticks,
+    resample,
+    run_backtest,
+    tick_quality,
+)
 from orb.config import load_params
 
 ROOT = Path(__file__).resolve().parent
@@ -27,6 +38,10 @@ SURFACE, INK, MUTED, GRID = "#101a29", "#e6edf7", "#99abc1", "#243247"
 COLORS = [TEAL, BLUE, "#c7a1ff", "#ffc979", "#ff8296", "#7fd6ed", "#c6d679", "#e9aece"]
 PLOT_CONFIG = {"displaylogo": False, "scrollZoom": False,
                "modeBarButtonsToRemove": ["lasso2d", "select2d"]}
+MODE_LABELS = {"m1": "M1 bar replay", "tick": "Full NBBO tick replay"}
+MODE_PILLS = {"m1": "M1 BAR REPLAY", "tick": "FULL TICK · WRDS NBBO"}
+TICK_ONLY_COMMAND = r"python run_all.py --mode tick --tick-root C:\data\wrds_ticks"
+M1_ONLY_COMMAND = r"python run_all.py --mode m1 --bars C:\data\wrds_m1"
 
 PRESETS = {
     "Baseline": ({}, "Close confirmation, both directions, 1.5R target. Flat at 22:45."),
@@ -80,6 +95,8 @@ button[kind="secondary"] {border-color:#30425a; border-radius:9px}
 .orb-source {display:flex; align-items:center; flex-wrap:wrap; gap:8px; margin:3px 0 20px}
 .orb-pill {display:inline-block; border:1px solid #30425a; background:#111f30; color:#bdcbe0; padding:5px 10px; border-radius:7px; font-size:11px}
 .orb-pill.demo {color:#ffcf88; background:#2c251a; border-color:#615034}
+.orb-pill.mode-m1 {color:#bcd2ff; background:#16243a; border-color:#36547b; font-weight:700; letter-spacing:.04em}
+.orb-pill.mode-tick {color:#77f4df; background:#102e2d; border-color:#287b6f; font-weight:700; letter-spacing:.04em}
 .orb-summary {font-size:13px; color:#99abc1; margin:8px 0 12px}
 .orb-summary strong {color:#e6edf7; font-weight:500}
 @media(max-width:850px) {
@@ -106,6 +123,29 @@ def load_tick_file(source: bytes, name: str, signature: str, strategy_offset_hou
     return load_ticks(source, name, strategy_offset_hours=strategy_offset_hours)
 
 
+@st.cache_resource(show_spinner=False)
+def build_tick_execution(root: str, strategy_offset_hours: int, symbol: str,
+                         max_cache_days: int, latency_ms: float,
+                         max_entry_delay_ms: float | None,
+                         max_eod_delay_ms: float | None,
+                         max_interquote_gap_ms: float | None) -> NbboExecution:
+    """Build one bounded, strict NBBO backend per launcher configuration."""
+    store = TickStore(
+        root,
+        strategy_offset_hours=strategy_offset_hours,
+        symbol=symbol,
+        max_cache_days=max_cache_days,
+    )
+    config = NbboExecutionConfig(
+        latency_ms=latency_ms,
+        max_entry_delay_ms=max_entry_delay_ms,
+        max_eod_delay_ms=max_eod_delay_ms,
+        max_interquote_gap_ms=max_interquote_gap_ms,
+        strict=True,
+    )
+    return NbboExecution(store, config)
+
+
 def style(fig: go.Figure, height=310, ytitle="", legend=False) -> go.Figure:
     fig.update_layout(
         template="plotly_dark", paper_bgcolor=SURFACE, plot_bgcolor=SURFACE,
@@ -126,9 +166,87 @@ def plot(fig, key):
     st.plotly_chart(fig, width="stretch", theme=None, config=PLOT_CONFIG, key=key)
 
 
+def _environment_mode() -> str:
+    mode = os.environ.get("ORB_BACKTEST_MODE", "m1").strip().lower()
+    if mode not in MODE_LABELS:
+        raise ValueError(
+            f"ORB_BACKTEST_MODE must be 'm1' or 'tick', received {mode!r}."
+        )
+    return mode
+
+
+def _env_number(name: str, default: float | int | None, *, integer: bool = False):
+    raw = os.environ.get(name)
+    if raw is None or not raw.strip():
+        return default
+    try:
+        value = int(raw) if integer else float(raw)
+    except ValueError as exc:
+        raise ValueError(f"{name} must be a number, received {raw!r}.") from exc
+    if value < 0:
+        raise ValueError(f"{name} must be nonnegative, received {raw!r}.")
+    return value
+
+
+def _mode_command(mode: str) -> str:
+    if mode == "tick":
+        root = os.environ.get("ORB_TICK_ROOT")
+        return (f'python run_all.py --mode tick --tick-root "{root}"'
+                if root else TICK_ONLY_COMMAND)
+    return M1_ONLY_COMMAND
+
+
+def _mode_block(mode: str) -> str | None:
+    prepared = st.session_state.prepared_mode
+    if mode != prepared:
+        return (
+            f"This app session was prepared for {MODE_LABELS[prepared]}. "
+            f"{MODE_LABELS[mode]} needs its own launcher-prepared dataset and execution source."
+        )
+    if mode == "tick":
+        root = os.environ.get("ORB_TICK_ROOT")
+        data = os.environ.get("ORB_DATA_FILE")
+        if not root:
+            return "Full tick mode needs ORB_TICK_ROOT from the launcher."
+        if not Path(root).is_dir():
+            return f"The WRDS tick root is unavailable: {root}"
+        if not data:
+            return "Full tick mode needs the tick-derived M1 signal file from the launcher."
+        if not Path(data).is_file():
+            return f"The tick-derived signal file is unavailable: {data}"
+    return None
+
+
+def _tick_parameter_issues(params: Params) -> list[str]:
+    issues = []
+    if params.entry_mode != "close":
+        issues.append("entry confirmation must be Candle close")
+    if params.eod_close is None:
+        issues.append("Flat at end of session must be enabled")
+    if params.breakeven_at_r > 0:
+        issues.append("breakeven must be off")
+    if params.trail_start_r > 0:
+        issues.append("trailing must be off")
+    return issues
+
+
+def _tick_execution_from_environment() -> tuple[NbboExecution, tuple]:
+    root = str(Path(os.environ["ORB_TICK_ROOT"]).resolve())
+    offset = _env_number("ORB_TICK_OFFSET_HOURS", 7, integer=True)
+    cache_days = _env_number("ORB_TICK_CACHE_DAYS", 2, integer=True)
+    latency = _env_number("ORB_TICK_LATENCY_MS", 0.0)
+    entry_delay = _env_number("ORB_TICK_MAX_ENTRY_DELAY_MS", 1_000.0)
+    eod_delay = _env_number("ORB_TICK_MAX_EOD_DELAY_MS", 1_000.0)
+    max_gap = _env_number("ORB_TICK_MAX_INTERQUOTE_GAP_MS", None)
+    symbol = os.environ.get("ORB_TICK_SYMBOL", "QQQ").strip().upper()
+    settings = (root, offset, symbol, cache_days, latency, entry_delay, eod_delay, max_gap)
+    return build_tick_execution(*settings), settings
+
+
 def initialize():
-    if st.session_state.get("workspace_version") == 5:
+    if st.session_state.get("workspace_version") == 6:
         return
+    mode = _environment_mode()
     path = os.environ.get("ORB_PARAMS_FILE")
     p = st.session_state.get("cfg") or (load_params(path) if path else load_params(ROOT / "configs/baseline.json"))
     for name, value in p.to_dict().items():
@@ -136,8 +254,16 @@ def initialize():
     st.session_state.p_eod_on = p.eod_close is not None
     st.session_state.p_eod_text = p.eod_close or "22:45"
     st.session_state.signal_tf = int(os.environ.get("ORB_SIGNAL_TF", "15"))
+    st.session_state.prepared_mode = mode
+    st.session_state.backtest_mode = mode
+    st.session_state.auto_run = False
     st.session_state.experiments = []
-    st.session_state.workspace_version = 5
+    st.session_state.workspace_version = 6
+
+
+def select_mode():
+    if st.session_state.backtest_mode == "tick":
+        st.session_state.auto_run = False
 
 
 def apply_preset():
@@ -150,10 +276,12 @@ def apply_preset():
     st.session_state.p_eod_text = changed.eod_close or "22:45"
 
 
-def number(label, field, minimum=0.0, maximum=None, step=0.1, fmt=None, help=None):
+def number(label, field, minimum=0.0, maximum=None, step=0.1, fmt=None, help=None,
+           disabled=False):
     value = st.session_state[f"p_{field}"]
     # Preserve valid configurations loaded by the launcher even beyond UI presets.
-    kwargs = dict(min_value=minimum, step=step, key=f"p_{field}", help=help)
+    kwargs = dict(min_value=minimum, step=step, key=f"p_{field}", help=help,
+                  disabled=disabled)
     if maximum is not None:
         kwargs["max_value"] = maximum
     if isinstance(value, int):
@@ -163,10 +291,31 @@ def number(label, field, minimum=0.0, maximum=None, step=0.1, fmt=None, help=Non
     return st.number_input(label, **kwargs)
 
 
+def _params_from_state() -> Params:
+    values = {field: st.session_state[f"p_{field}"] for field in Params().to_dict()}
+    values["eod_close"] = st.session_state.p_eod_text if st.session_state.p_eod_on else None
+    return Params(**values)
+
+
 def sidebar():
     with st.sidebar:
         st.markdown('<div class="orb-eyebrow">Strategy research</div><div class="orb-brand">ORB<span> / </span>Lab</div>', unsafe_allow_html=True)
         st.caption("Opening range. Every assumption visible.")
+        mode = st.selectbox(
+            "Execution mode", list(MODE_LABELS), key="backtest_mode",
+            format_func=MODE_LABELS.get, on_change=select_mode,
+            help="M1 settles fills from bars. Full tick executes confirmed signals against ordered WRDS NBBO quotes.",
+        )
+        st.markdown(
+            f'<span class="orb-pill mode-{mode}">{MODE_PILLS[mode]}</span>',
+            unsafe_allow_html=True,
+        )
+        tick_mode = mode == "tick"
+        if tick_mode:
+            st.caption("Signal rules use tick-derived M1/M15 candles; fills and exits use ordered bid/ask quotes.")
+            st.session_state.auto_run = False
+        else:
+            st.caption("Signals and fills use the selected bar dataset and its configured spread model.")
         paths = sorted({p.resolve() for pattern in ("*_M1.csv", "*_M1.csv.gz")
                         for p in DATA_DIR.rglob(pattern)})
         selected = os.environ.get("ORB_DATA_FILE")
@@ -175,25 +324,47 @@ def sidebar():
             paths = [selected] + [p for p in paths if p != selected]
         choice = st.selectbox("Dataset", paths, index=0 if paths else None,
                               format_func=lambda p: p.stem.replace("SYNTHETIC_NAS100", "Synthetic NAS100"),
-                              key="dataset")
+                              key="dataset", disabled=tick_mode)
         with st.expander("Upload your own bars"):
-            upload = st.file_uploader("M1 or signal bars CSV", type=["csv", "txt"])
-            st.caption("Timestamps must already use the strategy clock. Uploaded files stay in memory.")
+            upload = st.file_uploader("M1 or signal bars CSV", type=["csv", "txt"],
+                                      disabled=tick_mode)
+            st.caption("Full tick mode only accepts the launcher-prepared signal file. "
+                       "In M1 mode, timestamps must already use the strategy clock.")
 
-        st.selectbox("Starting preset", list(PRESETS), key="preset", on_change=apply_preset)
+        st.selectbox(
+            "Starting preset", list(PRESETS), key="preset", on_change=apply_preset,
+            format_func=lambda name: (
+                f"{name} · M1 only" if tick_mode and name in {
+                    "Immediate breakout", "Protect at 1R", "Trail the move"
+                } else name
+            ),
+        )
         st.caption(PRESETS[st.session_state.preset][1])
         st.toggle("Auto-run changes", value=False, key="auto_run",
-                  help="Recalculate when data or parameters change. Runs are only saved when you choose Save run.")
-        run = st.button("Run backtest", type="primary", width="stretch")
+                  disabled=tick_mode,
+                  help=("Disabled for full tick replay; use Run backtest for each deliberate run."
+                        if tick_mode else
+                        "Recalculate when data or parameters change. Runs are only saved when you choose Save run."))
+        draft_params = _params_from_state()
+        mode_block = _mode_block(mode)
+        tick_issues = _tick_parameter_issues(draft_params) if tick_mode else []
+        if mode_block:
+            st.warning("This mode is not ready in the current app session. See the command in the main panel.")
+        if tick_issues:
+            st.warning("Full tick milestone 1: " + "; ".join(tick_issues) + ".")
+        run = st.button("Run backtest", type="primary", width="stretch",
+                        disabled=bool(mode_block or tick_issues))
         st.caption("Save interesting results in the workspace to compare them later.")
 
         st.subheader("Trade setup")
         st.radio("Direction", ["both", "long", "short"], horizontal=True,
                  key="p_direction", format_func=lambda v: v.title())
         st.selectbox("Entry confirmation", ["close", "immediate"], key="p_entry_mode",
+                     disabled=tick_mode,
                      format_func=lambda v: "Candle close" if v == "close" else "First price crossing")
         close_mode = st.session_state.p_entry_mode == "close"
-        st.number_input("Confirmation candles", 1, 10, key="p_confirmation_bars", disabled=not close_mode,
+        st.number_input("Confirmation candles", 1, 10, key="p_confirmation_bars",
+                        disabled=not close_mode,
                         help="Consecutive signal candles that must close beyond the range.")
         st.toggle("Require matching candle colour", key="p_confirmation_same_color", disabled=not close_mode,
                   help="Long confirmations close green; short confirmations close red.")
@@ -279,16 +450,17 @@ def sidebar():
             st.caption("Zero disables a filter. EMA slope uses completed bars. Volume depends on the source.")
 
         with st.expander("Breakeven & trailing"):
-            number("Breakeven trigger · R", "breakeven_at_r")
-            number("Breakeven lock · R", "breakeven_lock_r")
-            number("Trailing trigger · R", "trail_start_r")
-            number("Trailing distance · R", "trail_dist_r")
-            number("Trailing step · R", "trail_step_r")
-            st.caption("Zero trigger disables management. Stops update per path bar in Python.")
+            number("Breakeven trigger · R", "breakeven_at_r", disabled=tick_mode)
+            number("Breakeven lock · R", "breakeven_lock_r", disabled=tick_mode)
+            number("Trailing trigger · R", "trail_start_r", disabled=tick_mode)
+            number("Trailing distance · R", "trail_dist_r", disabled=tick_mode)
+            number("Trailing step · R", "trail_step_r", disabled=tick_mode)
+            st.caption("Full tick milestone 1 supports fixed stops and targets only. "
+                       "In M1 mode, enabled stops update once per path bar.")
 
         with st.expander("Costs & contract"):
-            number("Assumed spread · price units", "spread")
-            st.checkbox("Use recorded spread instead", key="p_use_data_spread")
+            number("Assumed spread · price units", "spread", disabled=tick_mode)
+            st.checkbox("Use recorded spread instead", key="p_use_data_spread", disabled=tick_mode)
             number("Maximum spread · price units", "max_spread",
                    help="Zero disables the entry guard.")
             number("Minimum stop · points", "min_stop_points", step=1,
@@ -303,14 +475,17 @@ def sidebar():
             number("Maximum gross leverage", "max_gross_leverage", minimum=0.0, step=0.25,
                    help="Gross position notional divided by equity. Zero disables the capital cap.")
             st.selectbox("If SL and TP touch in one bar", ["sl_first", "tp_first"], key="p_same_bar_rule",
+                         disabled=tick_mode,
                          format_func=lambda v: "Stop first (conservative)" if v == "sl_first" else "Target first (optimistic)")
-            st.caption("A positive leverage cap prevents minimum-lot clamping from exceeding available capital. "
+            st.caption(("Full tick replay uses the observed ask for long entries, bid for short entries, "
+                        "and the opposite quote side for exits; same-bar ordering does not apply. "
+                        if tick_mode else "") +
+                       "A positive leverage cap prevents minimum-lot clamping from exceeding available capital. "
                        "Broker margin, financing and per-order commission minimums are not modeled.")
         st.divider()
-        st.caption("Python bar simulation · EA v1.40\n\nResearch results need broker reconciliation.")
-    values = {field: st.session_state[f"p_{field}"] for field in Params().to_dict()}
-    values["eod_close"] = st.session_state.p_eod_text if st.session_state.p_eod_on else None
-    return choice, upload, st.session_state.signal_tf, Params(**values), run
+        st.caption(("WRDS NBBO top-of-book replay" if tick_mode else "Python bar simulation") +
+                   " · EA v1.40\n\nResearch results need broker reconciliation.")
+    return mode, choice, upload, st.session_state.signal_tf, _params_from_state(), run
 
 
 def performance_chart(record, mode):
@@ -728,6 +903,12 @@ def expanding_target_walk_forward(record, targets=None) -> pd.DataFrame:
 def validation_view(record):
     trades = record["result"].trades.sort_values("exit_time")
     st.subheader("Validation, stability and failure modes")
+    if record.get("mode", "m1") == "tick":
+        st.info(
+            "Validation sweeps are disabled for full tick replay. Each candidate must be rerun "
+            "through its ordered NBBO quotes; the bar-only sweep tools cannot represent those fills."
+        )
+        return
     if len(trades) < 4:
         st.info("At least four trades are needed for chronological and Monte Carlo diagnostics.")
         return
@@ -902,6 +1083,7 @@ def _mql_function(source: str, signature: str) -> str:
 
 def algorithm_view(record):
     p, tf = record["result"].params, record["tf"]
+    tick_mode = record.get("mode", "m1") == "tick"
     source = EA_PATH.read_text(encoding="utf-8")
     version_match = re.search(r'#property\s+version\s+"([^"]+)"', source)
     version = version_match.group(1) if version_match else "unknown"
@@ -911,7 +1093,8 @@ def algorithm_view(record):
     st.caption("This is the checked-in MetaTrader 5 Expert Advisor—not pseudocode. Edit the source, compile it, and reconcile it with Python.")
     a, b, c = st.columns(3)
     a.metric("EA source", f"v{version}")
-    b.metric("Selected setup", "MT5-ready" if not issues else "Parity needed")
+    b.metric("Selected setup", ("Python NBBO only" if tick_mode else
+                                "MT5-ready" if not issues else "Parity needed"))
     compile_log = EA_PATH.with_name("compile.log")
     compile_text = compile_log.read_text(encoding="utf-8", errors="replace") if compile_log.exists() else ""
     compile_match = re.search(r"Result:\s*(\d+) errors?,\s*(\d+) warnings?", compile_text)
@@ -935,7 +1118,12 @@ def algorithm_view(record):
         + (f", capped at **{p.max_gross_leverage:g}×** gross exposure." if p.max_gross_leverage else ".")
     )
 
-    if issues:
+    if tick_mode:
+        st.warning(
+            "The strategy rules can map to the EA, but this result's WRDS TAQ NBBO execution cannot. "
+            "MetaTrader can only replay and trade the broker's own listed QQQ symbol and broker ticks."
+        )
+    elif issues:
         st.warning("This selected setup is not fully represented by EA v" + version + ": " + ", ".join(issues) + ".")
     else:
         st.success("The selected rules have MT5 EA parity. The source still needs compiling in your terminal and broker testing before use.")
@@ -965,13 +1153,39 @@ def algorithm_view(record):
 def main():
     st.set_page_config(page_title="ORB Lab · Research workspace", page_icon="↗", layout="wide")
     st.markdown(CSS, unsafe_allow_html=True)
-    initialize()
-    choice, upload, tf, params, manual = sidebar()
+    try:
+        initialize()
+    except (ValueError, OSError, KeyError) as exc:
+        st.error(f"Cannot initialize the workspace: {exc}")
+        return
+    mode, choice, upload, tf, params, manual = sidebar()
     st.markdown('<div class="orb-eyebrow">Opening range breakout / research workspace</div>', unsafe_allow_html=True)
     st.title("Explore the opening move")
     st.caption("Shape a setup. Inspect every trade. Compare the assumptions.")
+    mode_block = _mode_block(mode)
+    if mode_block:
+        st.error(mode_block)
+        st.caption("Prepare that mode from the project root, then use the new app session it launches:")
+        st.code(_mode_command(mode), language="powershell")
+        st.caption("No bars or prior result were reused for the selected execution mode.")
+        return
+    tick_issues = _tick_parameter_issues(params) if mode == "tick" else []
+    if tick_issues:
+        st.error("Full tick milestone 1 cannot run this setup: " + "; ".join(tick_issues) + ".")
+        return
+    execution = None
+    execution_settings = ()
+    if mode == "tick":
+        try:
+            execution, execution_settings = _tick_execution_from_environment()
+        except (ValueError, OSError, KeyError) as exc:
+            st.error(f"Cannot prepare strict NBBO execution: {exc}")
+            st.code(_mode_command(mode), language="powershell")
+            return
     try:
         if upload is not None:
+            if mode == "tick":
+                raise ValueError("Full tick mode does not accept uploaded bars; relaunch it with run_all.py.")
             content = upload.getvalue()
             identity = hashlib.sha256(content).hexdigest()
             raw = load_file(content, identity)
@@ -992,26 +1206,59 @@ def main():
         st.error(f"Check the setup: {exc}")
         return
     synthetic = "SYNTHETIC" in source.upper()
-    signature = hashlib.sha256(json.dumps([identity, tf, params.to_dict()], sort_keys=True).encode()).hexdigest()
+    signature = hashlib.sha256(json.dumps(
+        [mode, identity, tf, params.to_dict(), execution_settings], sort_keys=True,
+    ).encode()).hexdigest()
     last = st.session_state.get("active_run")
-    dirty = last is None or last["signature"] != signature
-    if last is None or "raw" not in last or manual or (dirty and st.session_state.auto_run):
+    valid_last = last is not None and "raw" in last and last.get("mode", "m1") == mode
+    dirty = not valid_last or last["signature"] != signature
+    if mode == "tick" and not valid_last and not manual:
+        st.info("Full tick replay runs only when requested. Review the settings, then press Run backtest.")
+        return
+    should_run = manual or (mode == "m1" and (
+        not valid_last or (dirty and st.session_state.auto_run)
+    ))
+    if should_run:
+        replay_label = "Full NBBO tick replay" if mode == "tick" else "M1 bar replay"
+        progress_bar = st.progress(0, text=f"{replay_label}: starting")
+        progress_state = {"percent": -1}
+
+        def replay_progress(done: int, total: int, detail: str) -> None:
+            percent = 100 if total <= 0 else max(0, min(100, int(done * 100 / total)))
+            if percent == progress_state["percent"] and done != total:
+                return
+            progress_state["percent"] = percent
+            suffix = "complete" if done == total else detail
+            progress_bar.progress(
+                percent,
+                text=f"{replay_label}: {percent}% · {done:,}/{total:,} sessions · {suffix}",
+            )
+
         try:
-            with st.spinner("Simulating the setup…"):
+            spinner = ("Replaying ordered WRDS NBBO quotes…" if mode == "tick"
+                       else "Simulating the setup…")
+            with st.spinner(spinner):
                 bars = resample(raw, tf) if have < tf else raw
-                result = run_backtest(bars, params, path=raw if have < tf else None)
+                result = run_backtest(
+                    bars, params, path=raw if have < tf else None, execution=execution,
+                    progress=replay_progress,
+                )
             last = dict(id=uuid4().hex[:10], signature=signature, result=result, bars=bars, raw=raw,
                         source=source, synthetic=synthetic, tf=tf, rows=len(raw), input_tf=have,
-                        preset=st.session_state.preset,
+                        preset=st.session_state.preset, mode=mode,
                         first=str(raw.index[0]), last=str(raw.index[-1]))
             st.session_state.active_run = last
             dirty = False
         except ValueError as exc:
             st.error(f"Cannot run this setup: {exc}")
             return
+        finally:
+            progress_bar.empty()
     if dirty:
         st.info(f"Setup changed. Press Run backtest to apply it. Results below still use {last['source']} and the last executed settings.")
-    pills = [("Synthetic demo" if last["synthetic"] else "Local dataset", "demo" if last["synthetic"] else ""),
+    last_mode = last.get("mode", "m1")
+    pills = [(MODE_PILLS[last_mode], f"mode-{last_mode}"),
+             ("Synthetic demo" if last["synthetic"] else "Local dataset", "demo" if last["synthetic"] else ""),
              (last["source"], ""),
              (f"{pd.Timestamp(last['first']):%d %b %Y} — {pd.Timestamp(last['last']):%d %b %Y}", ""),
              (f"{last['rows']:,} input bars", "")]

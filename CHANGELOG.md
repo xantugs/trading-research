@@ -1,5 +1,24 @@
 # Changelog
 
+## 1.6.0 — 2026-09-10
+
+- Added strict, non-overlapping `m1` and `tick` runner modes. M1 reads only the
+  external WRDS M1 root; tick reads only the raw WRDS tree and derives its own
+  M1 and signal candles.
+- Added a parity-tested local raw-event builder matching the WRDS Cloud M1
+  definition for best-bid OHLC, eligible trade/share volume, quote counts and
+  p50/p95 spread statistics.
+- Added ordered complete-NBBO execution for close-confirmed entries and fixed
+  stop, target, and EOD exits, with executable-side fills and strict quote-delay
+  checks.
+- Recorded the local QQQ inventory: M1 for 2012–2024 and 2,518 raw Parquet files
+  covering 1,259 trading days in 2018–2022.
+- Excluded five incomplete opening-range dates without filling prices. Three are
+  2020 market-wide circuit-breaker halts; the other two are documented valid-NBBO
+  source gaps.
+- Made QQQ/WRDS the primary research workflow while retaining CFD and synthetic
+  inputs as explicit auxiliary tools.
+
 ## 1.5.0 — 2026-09-10
 
 - Added a decision-event ledger, daily-lock and rejected-signal chart markers,

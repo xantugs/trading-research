@@ -32,12 +32,13 @@ rounded down to the step, so the R-multiples never depend on account size.
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
-from typing import Optional
+from typing import Callable, Optional
 
 import numpy as np
 import pandas as pd
 
 from .data import daily_bars, infer_minutes, moving_average, resample, mt5_atr, validate_bars
+from .execution import ExecutionDataError, ExecutionIntent, NbboExecution
 
 
 # --------------------------------------------------------------------------- #
@@ -237,13 +238,19 @@ class Result:
 # --------------------------------------------------------------------------- #
 # Engine
 # --------------------------------------------------------------------------- #
-def run_backtest(bars: pd.DataFrame, params: Params, path: Optional[pd.DataFrame] = None) -> Result:
+def run_backtest(bars: pd.DataFrame, params: Params, path: Optional[pd.DataFrame] = None,
+                 execution: Optional[NbboExecution] = None,
+                 progress: Optional[Callable[[int, int, str], None]] = None) -> Result:
     """Run the strategy.
 
     bars : signal-timeframe bars (e.g. M15).  If you only have M1 data, pass the
            M1 frame as ``path`` and ``resample(m1, 15)`` as ``bars``.
     path : finer bars used to resolve exits / immediate entries (M1 ideally).
            Defaults to ``bars``.
+    execution : optional strict NBBO top-of-book backend.  Signal and indicator
+                rules still use ``bars``/``path``; entry and exit prices use the
+                ordered quote stream.  Milestone one supports close-confirmed,
+                fixed-stop/target, end-of-day-flat runs only.
     """
     p = params
     if path is None:
@@ -256,6 +263,13 @@ def run_backtest(bars: pd.DataFrame, params: Params, path: Optional[pd.DataFrame
         raise ValueError("Exit path ends before the last signal bar")
     tf = infer_minutes(bars)
     p.validate(tf)
+    if execution is not None:
+        if p.entry_mode != "close":
+            raise ValueError("Full tick mode currently supports close-confirmed entries only")
+        if p.eod_close is None:
+            raise ValueError("Full tick mode currently requires an end-of-day close")
+        if p.breakeven_at_r > 0 or p.trail_start_r > 0:
+            raise ValueError("Full tick mode currently requires breakeven and trailing to be off")
 
     sig = _Arrays(bars)
     pth = _Arrays(path)
@@ -300,6 +314,8 @@ def run_backtest(bars: pd.DataFrame, params: Params, path: Optional[pd.DataFrame
     for session_i, orb_i in enumerate(orb_indices):
         day = sig.day[orb_i]
         orb_time = pd.Timestamp(sig.t[orb_i])
+        if progress is not None:
+            progress(session_i, len(orb_indices), orb_time.date().isoformat())
         prior_path = path.loc[path.index < orb_time]
         range_note = "Observed opening range"
         if p.range_mode != "signal_bar":
@@ -418,7 +434,8 @@ def run_backtest(bars: pd.DataFrame, params: Params, path: Optional[pd.DataFrame
 
         trade_taken = False
 
-        def open_trade(direction: int, entry: float, entry_time: np.datetime64, path_start: int, signal_time: np.datetime64) -> None:
+        def open_trade(direction: int, entry: float, entry_time: np.datetime64, path_start: int,
+                       signal_time: np.datetime64) -> None:
             if path_start >= len(pth.t) or pth.t[path_start] != entry_time:
                 raise ValueError(f"Exit path is missing the entry bar at {entry_time}")
             if direction > 0:
@@ -427,31 +444,153 @@ def run_backtest(bars: pd.DataFrame, params: Params, path: Optional[pd.DataFrame
             else:
                 sl = (o_h + o_l) / 2 if p.stop_mode == "midpoint" else o_l + rng * p.sl_ratio
                 tp = entry - (sl - entry) * p.tp_ratio
-            if (direction > 0 and sl >= entry) or (direction < 0 and sl <= entry):
-                rec["long" if direction > 0 else "short"] = "skipped: entry beyond stop"
-                add_event(entry_time, "entry_rejected", "Entry is beyond the initial stop",
-                          "long" if direction > 0 else "short", entry, "rejected")
-                return
-            entry_spread = _spread_at(pth, p, index=path_start)
-            if p.max_spread > 0 and entry_spread > p.max_spread:
-                rec["long" if direction > 0 else "short"] = "skipped: spread too wide"
-                add_event(entry_time, "entry_rejected",
-                          f"Spread {entry_spread:.5f} exceeds {p.max_spread:g}",
-                          "long" if direction > 0 else "short", entry, "rejected")
-                return
-            risk = abs(entry - sl)
-            if p.min_stop_points > 0 and risk < p.min_stop_points * p.point:
-                rec["long" if direction > 0 else "short"] = "skipped: stop too close"
-                add_event(entry_time, "entry_rejected",
-                          f"Initial risk is below {p.min_stop_points} points",
-                          "long" if direction > 0 else "short", entry, "rejected")
-                return
-            opening_quote = pth.o[path_start] + (_spread_at(pth, p, index=path_start) if direction > 0 else 0)
-            intrabar_entry = p.entry_mode == "immediate" and abs(entry - opening_quote) > 1e-9
-            exit_time, exit_price, reason, ambiguous, ambiguous_time = _resolve_exit(
-                pth, path_start, direction, entry, sl, tp, p, eod, intrabar_entry=intrabar_entry)
-            exit_index = min(int(np.searchsorted(pth.t, exit_time, side="right")) - 1, len(pth.t) - 1)
-            mfe_r, mae_r = _excursions(pth, path_start, exit_index, direction, entry, risk, p)
+            side = "long" if direction > 0 else "short"
+            reference_entry = entry
+            reference_risk = abs(reference_entry - sl)
+            reference_exit_time = reference_exit = reference_r = np.nan
+            reference_reason = "entry beyond stop"
+            reference_ambiguous = False
+            reference_ambiguous_time = None
+            if (direction > 0 and sl < reference_entry) or (direction < 0 and sl > reference_entry):
+                reference_tp = reference_entry + direction * reference_risk * p.tp_ratio
+                (reference_exit_time, reference_exit, reference_reason, reference_ambiguous,
+                 reference_ambiguous_time) = _resolve_exit(
+                    pth, path_start, direction, reference_entry, sl, reference_tp, p, eod,
+                    intrabar_entry=False,
+                )
+                reference_r = (reference_exit - reference_entry) * direction / reference_risk
+
+            execution_fields = {
+                "execution_model": "m1_bars",
+                "order_activation_time": pd.Timestamp(entry_time),
+                "reference_entry": reference_entry,
+                "reference_exit_time": pd.Timestamp(reference_exit_time)
+                if not pd.isna(reference_exit_time) else pd.NaT,
+                "reference_exit": reference_exit,
+                "reference_reason": reference_reason,
+                "reference_r": reference_r,
+                "m1_same_bar_ambiguous": reference_ambiguous,
+                "m1_ambiguous_bar_time": pd.Timestamp(reference_ambiguous_time)
+                if reference_ambiguous_time is not None else pd.NaT,
+                "entry_event_id": np.nan,
+                "entry_bid": np.nan,
+                "entry_ask": np.nan,
+                "entry_spread": _spread_at(pth, p, index=path_start),
+                "entry_delay_ms": 0.0,
+                "entry_slippage_points": 0.0,
+                "initial_sl": sl,
+                "final_sl": sl,
+                "exit_event_id": np.nan,
+                "exit_bid": np.nan,
+                "exit_ask": np.nan,
+                "exit_trigger_level": np.nan,
+                "exit_slippage_points": np.nan,
+                "eod_delay_ms": 0.0 if reference_reason == "EOD" else np.nan,
+                "mfe_time": pd.NaT,
+                "mfe_event_id": np.nan,
+                "mfe_price": np.nan,
+                "mae_time": pd.NaT,
+                "mae_event_id": np.nan,
+                "mae_price": np.nan,
+                "quote_events_processed": 0,
+                "max_interquote_gap_ms": np.nan,
+                "tick_source_file": "",
+                "execution_status": "executed",
+            }
+
+            if execution is None:
+                if (direction > 0 and sl >= entry) or (direction < 0 and sl <= entry):
+                    rec[side] = "skipped: entry beyond stop"
+                    add_event(entry_time, "entry_rejected", "Entry is beyond the initial stop",
+                              side, entry, "rejected")
+                    return
+                entry_spread = _spread_at(pth, p, index=path_start)
+                if p.max_spread > 0 and entry_spread > p.max_spread:
+                    rec[side] = "skipped: spread too wide"
+                    add_event(entry_time, "entry_rejected",
+                              f"Spread {entry_spread:.5f} exceeds {p.max_spread:g}",
+                              side, entry, "rejected")
+                    return
+                risk = abs(entry - sl)
+                if p.min_stop_points > 0 and risk < p.min_stop_points * p.point:
+                    rec[side] = "skipped: stop too close"
+                    add_event(entry_time, "entry_rejected",
+                              f"Initial risk is below {p.min_stop_points} points",
+                              side, entry, "rejected")
+                    return
+                opening_quote = pth.o[path_start] + (entry_spread if direction > 0 else 0)
+                intrabar_entry = p.entry_mode == "immediate" and abs(entry - opening_quote) > 1e-9
+                exit_time, exit_price, reason, ambiguous, ambiguous_time = _resolve_exit(
+                    pth, path_start, direction, entry, sl, tp, p, eod, intrabar_entry=intrabar_entry)
+                exit_index = min(int(np.searchsorted(pth.t, exit_time, side="right")) - 1, len(pth.t) - 1)
+                mfe_r, mae_r = _excursions(pth, path_start, exit_index, direction, entry, risk, p)
+            else:
+                scheduled = pd.Timestamp(entry_time)
+                eod_time = scheduled.normalize() + pd.Timedelta(minutes=eod)
+                intent = ExecutionIntent(
+                    direction=direction,
+                    signal_time=pd.Timestamp(signal_time),
+                    activation_time=scheduled,
+                    stop_loss=sl,
+                    target_ratio=p.tp_ratio,
+                    eod_time=eod_time,
+                    point=p.point,
+                    reference_entry=reference_entry,
+                    max_spread=p.max_spread,
+                    min_stop_distance=p.min_stop_points * p.point,
+                    entry_mode=p.entry_mode,
+                    breakeven_at_r=p.breakeven_at_r,
+                    trail_start_r=p.trail_start_r,
+                )
+                try:
+                    outcome = execution.execute(intent)
+                except ExecutionDataError as exc:
+                    raise ValueError(
+                        f"NBBO replay failed for {rec['date']} {side}: {exc.code}: {exc.detail}"
+                    ) from exc
+                if not outcome.executed:
+                    rec[side] = f"skipped: {outcome.detail}"
+                    rec["status"] = "signal consumed; execution rejected"
+                    add_event(outcome.entry_time or scheduled, "entry_rejected", outcome.detail,
+                              side, outcome.entry or np.nan, "rejected")
+                    return
+                entry = float(outcome.entry)
+                risk = float(outcome.risk_dist)
+                tp = float(outcome.target)
+                exit_time = outcome.exit_time.to_datetime64()
+                exit_price = float(outcome.exit)
+                reason = str(outcome.exit_reason)
+                ambiguous = False
+                ambiguous_time = None
+                mfe_r, mae_r = float(outcome.mfe_r), float(outcome.mae_r)
+                execution_fields.update({
+                    "execution_model": outcome.execution_model,
+                    "order_activation_time": outcome.order_activation_time,
+                    "entry_event_id": outcome.entry_event_id,
+                    "entry_bid": outcome.entry_bid,
+                    "entry_ask": outcome.entry_ask,
+                    "entry_spread": outcome.entry_spread,
+                    "entry_delay_ms": outcome.entry_delay_ms,
+                    "entry_slippage_points": outcome.entry_slippage_points,
+                    "initial_sl": outcome.initial_sl,
+                    "final_sl": outcome.final_sl,
+                    "exit_event_id": outcome.exit_event_id,
+                    "exit_bid": outcome.exit_bid,
+                    "exit_ask": outcome.exit_ask,
+                    "exit_trigger_level": outcome.exit_trigger_level,
+                    "exit_slippage_points": outcome.exit_slippage_points,
+                    "eod_delay_ms": outcome.eod_delay_ms,
+                    "mfe_time": outcome.mfe_time,
+                    "mfe_event_id": outcome.mfe_event_id,
+                    "mfe_price": outcome.mfe_price,
+                    "mae_time": outcome.mae_time,
+                    "mae_event_id": outcome.mae_event_id,
+                    "mae_price": outcome.mae_price,
+                    "quote_events_processed": outcome.quote_events_processed,
+                    "max_interquote_gap_ms": outcome.max_interquote_gap_ms,
+                    "tick_source_file": str(outcome.source_path or ""),
+                    "execution_status": outcome.status,
+                })
             trades.append({
                 "date": rec["date"],
                 "direction": "long" if direction > 0 else "short",
@@ -465,7 +604,7 @@ def run_backtest(bars: pd.DataFrame, params: Params, path: Optional[pd.DataFrame
                 "range_atr": range_atr,
                 "vol_ratio": vol_ratio,
                 "signal_time": pd.Timestamp(signal_time),
-                "entry_time": pd.Timestamp(entry_time),
+                "entry_time": pd.Timestamp(outcome.entry_time) if execution is not None else pd.Timestamp(entry_time),
                 "entry": entry,
                 "sl": sl,
                 "tp": tp,
@@ -478,9 +617,14 @@ def run_backtest(bars: pd.DataFrame, params: Params, path: Optional[pd.DataFrame
                 "r": (exit_price - entry) * direction / risk,
                 "mfe_r": mfe_r,
                 "mae_r": mae_r,
+                **execution_fields,
             })
-            side = "long" if direction > 0 else "short"
-            add_event(entry_time, "entry", f"Entered {side}; daily trade locked", side, entry, "accepted")
+            actual_entry_time = pd.Timestamp(outcome.entry_time) if execution is not None else pd.Timestamp(entry_time)
+            add_event(actual_entry_time, "entry", f"Entered {side}; daily trade locked", side, entry, "accepted")
+            if execution is not None and reference_ambiguous:
+                add_event(reference_ambiguous_time, "m1_ambiguity_resolved",
+                          f"M1 touched SL and TP; ordered NBBO exited by {reason}", side,
+                          exit_price, "accepted")
             if ambiguous:
                 add_event(ambiguous_time, "same_bar_ambiguous",
                           f"SL and TP touched; resolved with {p.same_bar_rule}", side, status="warning")
@@ -570,7 +714,16 @@ def run_backtest(bars: pd.DataFrame, params: Params, path: Optional[pd.DataFrame
     trade_columns = ["date", "direction", "dir", "orb_time", "orb_high", "orb_low", "orb_range",
                      "range_mode", "range_lookback_ratio", "range_atr", "vol_ratio", "signal_time",
                      "entry_time", "entry", "sl", "tp", "risk_dist", "exit_time", "exit", "reason",
-                     "same_bar_ambiguous", "ambiguous_bar_time", "r", "mfe_r", "mae_r"]
+                     "same_bar_ambiguous", "ambiguous_bar_time", "r", "mfe_r", "mae_r",
+                     "execution_model", "order_activation_time", "reference_entry", "reference_exit_time",
+                     "reference_exit", "reference_reason", "reference_r", "m1_same_bar_ambiguous",
+                     "m1_ambiguous_bar_time", "entry_event_id", "entry_bid", "entry_ask", "entry_spread",
+                     "entry_delay_ms", "entry_slippage_points", "initial_sl", "final_sl", "exit_event_id",
+                     "exit_bid", "exit_ask", "exit_trigger_level", "exit_slippage_points", "eod_delay_ms",
+                     "mfe_time", "mfe_event_id", "mfe_price", "mae_time", "mae_event_id", "mae_price",
+                     "quote_events_processed", "max_interquote_gap_ms", "tick_source_file", "execution_status"]
+    if progress is not None:
+        progress(len(orb_indices), len(orb_indices), "complete")
     trades_df = pd.DataFrame(trades, columns=trade_columns)
     days_df = pd.DataFrame(days)
     trades_df, equity = _simulate_money(trades_df, p, start_time=bars.index[0])
@@ -795,7 +948,7 @@ def _simulate_money(trades: pd.DataFrame, p: Params, start_time) -> tuple[pd.Dat
             risk_budget[i] = risk_money
             size = risk_money / (risk_dist[i] * p.point_value) if risk_dist[i] > 0 else 0.0
             if p.max_gross_leverage > 0:
-                gross_open = sum(abs(entry[i]) * lots[k] * p.point_value for k in open_idx)
+                gross_open = sum(abs(entry[k]) * lots[k] * p.point_value for k in open_idx)
                 available = max(equity * p.max_gross_leverage - gross_open, 0.0)
                 affordable = available / (abs(entry[i]) * p.point_value) if entry[i] else 0.0
                 size = min(size, affordable)
@@ -838,6 +991,7 @@ def compute_stats(trades: pd.DataFrame, equity: pd.Series, p: Params, days: Opti
     if days is not None and not days.empty:
         s["days_with_range"] = int(len(days))
         s["days_traded"] = int((days["status"] == "traded").sum())
+        s["execution_rejections"] = int((days["status"] == "signal consumed; execution rejected").sum())
     if trades.empty:
         s.update(win_rate=0.0, avg_r=0.0, total_r=0.0, profit_factor=0.0, expectancy_r=0.0,
                  max_dd_pct=0.0, max_dd_r=0.0, final_balance=p.initial_balance, return_pct=0.0,
@@ -878,4 +1032,19 @@ def compute_stats(trades: pd.DataFrame, equity: pd.Series, p: Params, days: Opti
     span_days = max((trades["exit_time"].max() - trades["entry_time"].min()).days, 1)
     s["trades_per_year"] = float(len(trades) * 365.0 / span_days)
     s["reasons"] = trades["reason"].value_counts().to_dict()
+    if "execution_model" in trades:
+        s["execution_models"] = trades["execution_model"].value_counts().to_dict()
+        tick = trades[trades["execution_model"] == "nbbo_top_of_book"]
+        s["nbbo_trades"] = int(len(tick))
+        if not tick.empty:
+            s["mean_entry_spread"] = float(tick["entry_spread"].mean())
+            s["max_entry_spread"] = float(tick["entry_spread"].max())
+            s["mean_entry_delay_ms"] = float(tick["entry_delay_ms"].mean())
+            s["max_entry_delay_ms"] = float(tick["entry_delay_ms"].max())
+            s["quote_events_processed"] = int(tick["quote_events_processed"].sum())
+            s["m1_same_bar_ambiguities"] = int(tick["m1_same_bar_ambiguous"].sum())
+            comparable = tick[tick["reference_reason"].isin(["SL", "TP", "EOD"])]
+            s["m1_nbbo_exit_disagreements"] = int(
+                (comparable["reference_reason"] != comparable["reason"]).sum()
+            )
     return s

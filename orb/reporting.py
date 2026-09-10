@@ -8,6 +8,7 @@ import json
 import math
 import platform
 import subprocess
+import tomllib
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -52,7 +53,10 @@ def quality_report(m1: pd.DataFrame, tf: int, orb_hour: int, orb_minute: int) ->
         "observed_days": len(observed_days), "partial_signal_bars": int((present < tf).sum()),
         "incomplete_or_missing_opening_ranges": missing,
         "gaps_over_one_minute": int((m1.index.to_series().diff() > pd.Timedelta(minutes=1)).sum()),
-        "note": "Gaps include scheduled closures. No prices are forward-filled. Incomplete opening ranges abort the run.",
+        "note": (
+            "Gaps include scheduled closures. No prices are forward-filled. "
+            "Incomplete opening ranges are listed so the launcher can exclude those sessions explicitly."
+        ),
     }
 
 
@@ -62,6 +66,17 @@ def save_result(result: Result, output: Path, source: dict, quality: dict) -> Pa
     result.days.to_csv(output / "days.csv", index=False)
     result.events.to_csv(output / "events.csv", index=False)
     result.equity.to_csv(output / "balance.csv", index_label="time")
+    if ("execution_model" in result.trades
+            and (result.trades["execution_model"] == "nbbo_top_of_book").any()):
+        comparison = [
+            "date", "direction", "signal_time", "order_activation_time", "entry_time",
+            "reference_entry", "entry", "entry_slippage_points", "reference_exit_time",
+            "exit_time", "reference_exit", "exit", "reference_reason", "reason",
+            "reference_r", "r", "m1_same_bar_ambiguous", "entry_spread",
+            "entry_delay_ms", "exit_slippage_points", "quote_events_processed",
+            "tick_source_file",
+        ]
+        result.trades[comparison].to_csv(output / "execution_comparison.csv", index=False)
     write_json(output / "params.json", result.params.to_dict())
     write_json(output / "stats.json", result.stats)
     write_json(output / "data_quality.json", quality)
@@ -78,8 +93,10 @@ def save_result(result: Result, output: Path, source: dict, quality: dict) -> Pa
         revision, dirty = None, None
     source_hashes = {str(p.relative_to(root)): file_hash(p) for p in sorted((root / "orb").glob("*.py"))}
     source_hashes["run_all.py"] = file_hash(root / "run_all.py")
+    project_metadata = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
     manifest = {
-        "created_at_utc": datetime.now(timezone.utc).isoformat(), "project_version": "1.5.0",
+        "created_at_utc": datetime.now(timezone.utc).isoformat(),
+        "project_version": project_metadata["project"]["version"],
         "git_revision": revision, "git_dirty": dirty, "source_sha256": source_hashes,
         "python": platform.python_version(), "platform": platform.platform(),
         "packages": {k: importlib.metadata.version(k) for k in ("numpy", "pandas", "plotly", "tzdata")},
@@ -95,6 +112,13 @@ def save_result(result: Result, output: Path, source: dict, quality: dict) -> Pa
             "END exits mark still-open trades at the last available close.",
         ],
     }
+    if source.get("execution_model") == "nbbo_top_of_book":
+        manifest["limitations"].extend([
+            "NBBO replay uses consolidated top-of-book quotes; it does not model routing latency, "
+            "queue position, displayed size, market impact or guaranteed broker fills.",
+            "Tick mode is strict and does not fall back to M1 execution when a required quote day is unusable.",
+            "Tick milestone one supports close-confirmed entries, fixed SL/TP and end-of-day exits only.",
+        ])
     write_json(output / "manifest.json", manifest)
     balance = go.Figure(go.Scatter(x=result.equity.index, y=result.equity.values, name="Balance"))
     balance.update_layout(template="plotly_white", title="Closed-trade balance", height=350)

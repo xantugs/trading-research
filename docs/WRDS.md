@@ -1,20 +1,50 @@
 # WRDS TAQ workflow
 
-The WRDS adapter targets **QQQ in NYSE TAQ Millisecond Daily Product**. It keeps
-two distinct data layers:
+The WRDS adapter targets **QQQ in NYSE TAQ Millisecond Daily Product**. The
+licensed data stays outside Git in two independent local roots:
 
-- yearly M1 research bars built on WRDS Cloud from valid non-crossed consolidated
-  NBBO quotes, with consolidated trade counts and share volume;
-- raw daily trades and complete NBBO quotes for selected periods that need
-  event-level execution analysis.
+- `C:\data\wrds_m1`: yearly M1 research bars built on WRDS Cloud;
+- `C:\data\wrds_ticks`: raw daily consolidated trades and complete NBBO quotes.
 
-M1 is the practical full-history layer. It does not contain ticks. Raw exports
-retain the detailed SIP events but still do not provide full order-book depth,
-queue position, or a broker CFD price.
+The roots are different research inputs. M1 mode never reads the tick root.
+Tick mode never reads or falls back to the M1 root; it derives all of its M1
+bars and default M15 signal candles from the raw-event tree.
+
+## Current local inventory
+
+The M1 root contains 13 yearly QQQ gzip files covering 2012–2024. The raw root
+contains QQQ for 2018–2022: 2,518 Parquet files for 1,259 trading days, paired
+as one consolidated-trade file and one complete-NBBO file per day, plus 60
+monthly manifests. The 92 missing-table entries represent 46 market holidays,
+with one absent trade table and one absent quote table per holiday.
+
+The raw archive is event-level SIP data. It retains New York timestamps and
+subsecond ordering, but it is top of book rather than full order-book depth and
+is not a broker CFD price feed.
+
+## Bar semantics
+
+Both cloud and local builders apply the same definition:
+
+- OHLC is the first, maximum, minimum, and last valid complete-NBBO `best_bid`
+  in each minute, with first/last ordered by `time_m` plus nanoseconds when that
+  field exists;
+- valid quotes have positive finite bid/ask and `best_ask >= best_bid`;
+- `tick_volume` is the number of positive consolidated trades whose correction
+  code is `00`;
+- `real_volume` is the sum of share size for those eligible trades;
+- `quote_updates` is retained separately;
+- `spread` is the within-minute p95 NBBO spread, rounded up to $0.01 points;
+  raw p50 and p95 spread diagnostics are retained by the local builder.
+
+TAQ timestamps are New York wall time. The builders add seven hours, so 09:30
+New York is stored as 16:30 throughout the year. The M1 spread summarizes the
+entire minute and therefore has within-minute look-ahead; it is a conservative
+bar-model cost proxy, not an entry-time quote.
 
 ## Build yearly M1 files on WRDS Cloud
 
-Upload these three files into `~/orb_taq`:
+Upload these files into `~/orb_taq`:
 
 ```text
 scripts/wrds_build_m1.py
@@ -32,83 +62,122 @@ qstat
 
 The submit script limits the array to three concurrent years. Each task writes
 one gzip CSV and manifest under `orb_m1_years_0730/YEAR/`. Progress is written
-to the SGE output log. Tables before 2018 do not expose `time_m_nano`; the builder
-detects this and falls back to `time_m` ordering.
+to the SGE output log. Tables before 2018 do not expose `time_m_nano`; the
+builder detects this and falls back to `time_m` ordering.
 
-The current builder begins at **07:30 New York time**. This supplies the full two
-hours before the 09:30 opening range. Earlier files built with the old 08:30
-default remain valid for strategies needing no more than one pre-open hour, but
-the engine rejects their two-hour range-ratio filter as insufficient history.
+The current builder begins at **07:30 New York time**, providing the full two
+hours before a 09:30 opening range. An older 08:30 export can still run setups
+that need at most one pre-open hour; a two-hour range-ratio filter must reject
+its incomplete lookback.
 
-## Raw tick exports
+## Export raw ticks on WRDS Cloud
 
-`wrds_submit_ticks.sh` submits one array task per month over 2018-2022 and calls
-`wrds_extract_taq.py` over each complete daily table, so pre-market and after-hours
-events are included. The already completed 2018–2022 pull used an exclusive
-23:59:59 endpoint; QQQ has no activity in that omitted final second, and future
-runs use the corrected 24:00 endpoint. Weekends and holidays have no TAQ table; they are recorded
-under `manifest.json` -> `missing_tables` rather than failing the task.
+`wrds_submit_ticks.sh` submits one array task per month and calls
+`wrds_extract_taq.py` for every available daily table. The completed 2018–2022
+pull includes full-day trades and quotes. Its exclusive 23:59:59 endpoint omitted
+no QQQ events in the final second; new runs use the corrected 24:00 endpoint.
+Weekends and holidays have no table and are recorded in each manifest rather
+than treated as job failures.
 
-The extractor writes **zstd Parquet** by default, which runs roughly 3-4x smaller
-than gzip CSV on this data because `sym_root` is one repeated value, `date` is
-constant per file and timestamps are monotonic. `--format csv` restores the old
-gzip CSV artifacts. Parquet needs `pyarrow` on the compute node; the job aborts
-with a clear message if it is unavailable.
-
-Raw output is tens of GB and must not go to the home directory:
+The extractor writes zstd Parquet by default. Raw output is tens of gigabytes
+and belongs on scratch while a cloud job is running:
 
 ```sh
 ls -d /scratch/*/hantu || mkdir -p /scratch/<institution>/<user>/orb_ticks
 qsub -v ORB_TICK_ROOT=/scratch/<institution>/<user>/orb_ticks wrds_submit_ticks.sh
 ```
 
-Run `wrds_probe_ticks.sh` first to measure both formats on six sample days,
-including 2020-03-16 as the worst case, before committing sixty tasks.
+Run `wrds_probe_ticks.sh` first when measuring a new date range. Scratch is
+temporary; verify local copies with `scripts/verify_tick_download.py` before
+removing the staged archives. WRDS credentials stay in the interactive SSH,
+SFTP, or Jupyter session and are never stored by this project.
 
-Scratch is staging, not storage: it is purged periodically. Prefer analysing the
-ticks on WRDS Cloud and retrieving aggregates over moving the whole set.
+## Run the two local modes
 
-## Download and run locally
+Run the complete M1 research layer and finish after writing reports:
 
-Create `data/wrds/years`, connect with SFTP, then download `orb_m1_years_0730` into
-that folder. WRDS password and MFA stay in the interactive SFTP client and are
-never stored by this project.
-
-Prepare one merged local gzip file, validate it, run the QQQ equity setup, and
-write a report:
-
-```sh
-python run_all.py --source wrds --bars data/wrds/years --symbol QQQ \
-  --config configs/qqq.json --no-app
+```powershell
+python run_all.py --mode m1 --no-app
 ```
 
-Omit `--no-app` to open ORB Lab. `run_all.py` accepts one WRDS M1 file or a
-directory of non-overlapping yearly files. Directory input is combined under
-`data/wrds/prepared/`; overlapping timestamps are rejected.
-For `--source wrds`, `configs/qqq.json` is selected automatically unless an
-explicit config is supplied. It uses whole shares, recorded NBBO spread, a
-declared per-share commission assumption and a 1× gross-notional cap.
-Sibling year manifests are checksum/clock/symbol validated when present. A
-missing manifest produces an explicit provenance warning; a partial manifest
-set is rejected.
+This reads only `C:\data\wrds_m1`. A different M1 file or non-overlapping yearly
+directory can be supplied with `--bars`, but `--tick-root` is rejected in this
+mode. Sibling manifests are validated when present; no manifests produces a
+provenance warning, while a partial manifest set is rejected.
 
-To test another forecast width, pass any positive decimal multiplier:
+Run the full available raw-event period:
 
-```sh
---set range_multiplier=2.35
+```powershell
+python run_all.py --mode tick --from 2018-01-01 --to 2023-01-01 --no-app
 ```
 
-Use a fresh `--output` directory for every saved experiment.
+For a short end-to-end check:
 
-## Export raw event data for exact replay work
+```powershell
+python run_all.py --mode tick --from 2018-01-01 --to 2018-02-01 --no-app
+```
 
-For a bounded date range on WRDS Cloud:
+Tick mode reads only `C:\data\wrds_ticks`; `--bars` is rejected. Use
+`--tick-root PATH` to select another raw tree. It creates a content-keyed M1
+cache under the project `.cache/wrds_tick_m1/`, resamples the selected signal
+timeframe (M15 by default), and then replays the same root's ordered NBBO for
+execution. The cache does not import, consult, or update `C:\data\wrds_m1`.
+Omit `--no-app` from either command to open ORB Lab.
+
+Both modes select `configs/qqq.json` unless `--config` is given. That profile
+uses whole shares, $1 P/L per $1 share move, a declared per-share commission,
+recorded spread where applicable, and a 1× gross-notional cap. Commission and
+leverage remain assumptions to test.
+
+## Incomplete opening ranges
+
+The M1 pipeline excludes five dates because the 16:30–16:44 strategy-clock
+opening range has fewer than 15 bars:
+
+- `2015-03-31`: 11/15 bars; raw ticks are outside the local archive, so the
+  cause is an unconfirmed valid-NBBO/source gap;
+- `2018-11-16`: 4/15 bars; raw quote rows continue during the rest of the
+  opening-range window, but none form a valid non-crossed NBBO;
+- `2020-03-09`: 5/15 bars, matching the market-wide opening circuit breaker;
+- `2020-03-12`: 6/15 bars, matching the market-wide opening circuit breaker;
+- `2020-03-16`: 1/15 bar, matching the market-wide opening circuit breaker.
+
+The pipeline excludes the entire affected date. It does not forward-fill or
+manufacture the missing part of an opening range.
+
+## Strict tick milestone
+
+Tick mode uses the bar-derived strategy signals, then chooses observed
+executable-side quotes from nanosecond-ordered valid complete NBBO: ask for a
+long entry or short exit, and bid for a short entry or long exit. It supports
+close-confirmed entries and fixed stop, target, and EOD exits.
+
+This milestone does not support immediate entry, breakeven, or trailing. An
+observed top-of-book quote resolves event order and displayed price, but does
+not model depth, queue position, routing delay beyond the configured latency,
+partial fills, hidden liquidity, or market impact. It is a TAQ execution model,
+not a promise of a broker fill.
+
+## Standalone local bar build
+
+The same self-contained raw tree can be converted explicitly when inspecting
+builder parity:
+
+```bat
+.venv\Scripts\python scripts\wrds_build_m1_local.py C:\data\wrds_ticks ^
+  --output-dir C:\data\wrds_tick_bars
+```
+
+This writes reproducible monthly and yearly M1 files plus manifests. The normal
+tick-mode command performs its own cached build, so this standalone output is
+not required and is not a fallback for either execution mode.
+
+For a bounded cloud export outside the completed archive:
 
 ```sh
 python3 wrds_extract_taq.py --symbol QQQ --from 2024-03-08 --to 2024-03-12 \
   --output-dir orb_exports_2024
 ```
 
-This writes one trade file and one complete-NBBO quote file per available day.
-Keep these provider files outside Git. A future tick engine will consume the raw
-layer; the current backtest engine resolves entries and exits on M1 bars.
+Keep all provider files outside Git and follow the applicable WRDS and NYSE
+redistribution terms.

@@ -14,15 +14,15 @@ The loader also accepts MetaTrader's tab-separated export, including its
 or spread, timezone-aware timestamps and duplicate bar timestamps are rejected.
 It sorts valid unique timestamps but never forward-fills prices.
 
-The command pipeline requires M1 data, builds midnight-aligned signal bars, and
-refuses incomplete opening-range candles. Other partial bars and gaps are
-reported, not silently filled. Scheduled exchange closures and data outages
-cannot be distinguished without a venue calendar; inspect the quality report
-and downloaded absent-day list. Entirely absent days do not generate trades.
+M1 mode loads these bars and builds midnight-aligned signal bars. Tick mode
+derives the same M1 contract from its own raw events before building M15 signal
+candles. A date whose opening-range candle is incomplete is excluded from the
+strategy input. Other partial bars and gaps are reported, and prices are never
+forward-filled. Entirely absent days do not generate trades.
 
 ## Dukascopy
 
-The default source is
+The Dukascopy M1 endpoint is
 `https://datafeed.dukascopy.com/datafeed/SYMBOL/YYYY/MM/DD/BID_candles_min_1.bi5`,
 with **zero-based month**. Day candle records are big-endian seconds/open/close/
 low/high/float-volume, LZMA compressed. Tick records are milliseconds/ask/bid/
@@ -46,7 +46,8 @@ filter for cross-engine reconciliation of these imports.
 The default spread is a user-specified constant. Subtracting asynchronous ask
 and bid candle closes does not measure the executable spread at one instant;
 the project does not manufacture a spread column from that difference.
-Raw ticks retain synchronized bid/ask fields for future tick-engine work.
+Raw Dukascopy ticks retain synchronized bid/ask fields, but the WRDS tick mode
+does not read this layout and there is no Dukascopy tick executor yet.
 
 Downloads include every requested calendar day (Sunday data included).
 HTTP 404/empty responses are listed in metadata; they are not cached as
@@ -102,7 +103,7 @@ with correction code `00`; `real_volume` sums their share size.
 That p95 spread is a conservative quote-update statistic for the whole minute.
 Using it at the minute open therefore looks ahead within that minute and is not
 the exact executable spread at entry. It is suitable as the first M1 cost proxy;
-ordered NBBO ticks are still required to validate fills and same-bar ordering.
+tick mode instead replays ordered NBBO quotes for executable-side fills.
 
 TAQ source timestamps are New York wall time. The builder adds seven hours so
 09:30 is stored as 16:30 throughout the year, matching the project strategy
@@ -111,8 +112,36 @@ Gzip CSV input is accepted directly by the loader and ORB Lab.
 
 The separate raw extractor writes consolidated trades and complete NBBO quote
 updates by day. These are event-level SIP records, not full depth-of-book data,
-and they are not broker CFD ticks. The overlay preserves nanosecond ordering,
-reports missing/crossed quotes and applies the explicit +7-hour clock shift;
-future execution replay must reject unusable quotes rather than silently use
-them. The current Python engine remains M1-driven.
+and they are not broker CFD ticks. Nanosecond ordering is preserved. Invalid,
+crossed or incomplete quotes are rejected, and the explicit +7-hour
+clock shift is applied before strategy evaluation.
+
+The runner has two deliberately non-overlapping WRDS modes:
+
+```powershell
+python run_all.py --mode m1 --no-app
+python run_all.py --mode tick --from 2018-01-01 --to 2023-01-01 --no-app
+```
+
+M1 mode reads only `C:\data\wrds_m1` by default. Tick mode reads only
+`C:\data\wrds_ticks`, derives its own M1 and default M15 signal candles, and
+replays ordered top-of-book NBBO quotes for execution. `--bars` can replace the
+M1 root only in M1 mode; `--tick-root` can replace the raw root only in tick
+mode. Neither mode falls back to or combines with the other root.
+
+The local real-data inventory is QQQ M1 for 2012–2024 and QQQ raw trades plus
+complete NBBO for 2018–2022. The raw tree contains 2,518 Parquet files for 1,259
+trading days and 60 monthly manifests. Five dates are excluded from M1 research
+because their 16:30–16:44 strategy-clock opening range is incomplete:
+`2015-03-31`, `2018-11-16`, `2020-03-09`, `2020-03-12`, and `2020-03-16`.
+The three 2020 gaps coincide with market-wide opening circuit-breaker halts.
+During the rest of the 2018 opening-range window, the raw file has quote rows
+but no valid non-crossed NBBO. Raw ticks do not cover 2015, so the earlier gap
+cannot be diagnosed from the local event archive. Whole dates are excluded;
+missing bars are not filled.
+
+Strict tick execution currently supports close-confirmed entries and fixed
+SL/TP/EOD exits. It does not yet support immediate entry, breakeven, or trailing.
+The observed SIP top of book gives bid/ask prices and ordering, but not depth,
+queue priority, broker routing, partial fills, or market impact.
 See [the WRDS workflow](WRDS.md).

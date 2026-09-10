@@ -1,40 +1,53 @@
 # ORB Backtest
 
 A reproducible Opening Range Breakout research project with a MetaTrader 5 EA,
-a Python bar simulator, Dukascopy, WRDS TAQ and MT5 data tools, trade reconciliation, and
+two Python execution modes for WRDS TAQ, data tools, trade reconciliation, and
 a Streamlit interface for someone who does not code.
 
-**Project version: 1.5.0.** EA v1.40 compiles locally with zero errors and warnings.
+**Project version: 1.6.0.** EA v1.40 compiles locally with zero errors and warnings.
 Python scenarios and the app are tested. Broker smoke testing and real-data
 reconciliation are still required. This repository does not establish a trading edge.
 
-## Start with one command
+## Run QQQ research
 
-Install **Python 3.11–3.13**, open a terminal in this folder, then run:
+Install **Python 3.11–3.13**, open a terminal in this folder, and choose one
+explicit WRDS mode. M1 mode reads only `C:\data\wrds_m1`:
 
 ```sh
-python run_all.py
+python run_all.py --mode m1
 ```
 
-The launcher creates a local `.venv`, installs the project, uses
-`data/USTEC_M1.csv` when that local file exists, runs the backtest, writes a
-report bundle under `outputs/`, and serves the app at
-[localhost:8501](http://localhost:8501). A clean checkout without local USTEC
-data falls back to a seeded 120-day synthetic software demo.
-Open that address; the first result loads automatically. Ctrl+C stops it.
-First setup needs internet; installed demo runs need no market-data connection.
-The launcher works from another working directory when invoked by full path.
+Tick mode reads only `C:\data\wrds_ticks`, derives its own M1 bars and M15
+signal candles from those events, and replays ordered top-of-book NBBO quotes:
+
+```sh
+python run_all.py --mode tick --from 2018-01-01 --to 2023-01-01
+```
+
+The launcher creates a local `.venv`, installs the project, runs the backtest,
+writes a report bundle under `outputs/`, and serves ORB Lab at
+[localhost:8501](http://localhost:8501). Open that address; the first result
+loads automatically. Ctrl+C stops it. First setup needs internet. The launcher
+also works from another working directory when invoked by full path.
+
+The modes are intentionally separate. M1 mode rejects a tick root. Tick mode
+rejects an M1 bar path and never falls back to `C:\data\wrds_m1`; its derived-bar
+cache is keyed to the raw tick tree and is only a signal-building artifact.
 
 | Task | Command |
 | --- | --- |
-| Run the synthetic software demo explicitly | `python run_all.py --source demo` |
-| Test the whole Python project and make a demo report | `python run_all.py --check --no-app` |
-| Compile the EA too (Windows with MT5 installed) | `python run_all.py --check --compile-mt5 --no-app` |
-| Use an existing Python environment without installs | `python run_all.py --no-install --no-app` |
-| Change settings | `python run_all.py --set tp_ratio=2 --set risk_pct=1 --no-app` |
+| QQQ M1 backtest and app | `python run_all.py --mode m1` |
+| QQQ M1 report only | `python run_all.py --mode m1 --no-app` |
+| Full available QQQ tick period | `python run_all.py --mode tick --from 2018-01-01 --to 2023-01-01 --no-app` |
+| January 2018 tick smoke test | `python run_all.py --mode tick --from 2018-01-01 --to 2018-02-01 --no-app` |
+| Custom M1 root | `python run_all.py --mode m1 --bars C:\data\wrds_m1 --no-app` |
+| Custom tick root | `python run_all.py --mode tick --tick-root C:\data\wrds_ticks --no-app` |
+| Test the whole Python project and make a demo report | `python run_all.py --source demo --check --no-app` |
+| Compile the EA too (Windows with MT5 installed) | `python run_all.py --source demo --check --compile-mt5 --no-app` |
+| Use an existing Python environment without installs | `python run_all.py --mode m1 --no-install --no-app` |
+| Change QQQ settings | `python run_all.py --mode m1 --set tp_ratio=2 --set risk_pct=1 --no-app` |
 | Prepare the full Dukascopy dataset only | `python run_all.py --source dukascopy --data-only` |
 | Prepare Dukascopy data, backtest and open the app | `python run_all.py --source dukascopy` |
-| Merge downloaded WRDS years and run | `python run_all.py --source wrds --bars data/wrds/years --no-app` |
 | Run local M1 bars already in the strategy clock | `python run_all.py --source csv --bars data/NAS100_M1.csv --no-app` |
 | Start only the app after setup | `.venv/Scripts/python -m streamlit run app.py` (Windows) |
 
@@ -75,23 +88,36 @@ filters, management and the end-of-day setting.
 
 ## QQQ on WRDS TAQ
 
-QQQ is the target research instrument once the compact WRDS years are local.
-Keep the licensed files outside Git and run:
+QQQ is the target research instrument. The local M1 collection covers
+2012–2024 in 13 yearly gzip files. The raw collection covers 2018–2022 in
+2,518 daily Parquet files (1,259 trading days, paired trade and quote files)
+plus 60 monthly manifests. Keep these licensed files outside Git.
 
-```sh
-python run_all.py --source wrds --bars data/wrds/years --no-app
-```
-
-WRDS mode automatically selects [configs/qqq.json](configs/qqq.json). The
+Both modes automatically select [configs/qqq.json](configs/qqq.json). The
 profile uses recorded M1 NBBO spread, whole shares, $1 P/L per $1 share move,
 a declared $0.005/share/side commission assumption, and a 1× gross-notional
-cap. Change commission and leverage to match the eventual broker. The recorded
-spread is a conservative full-minute p95 proxy; raw quote replay remains needed
-for exact fills and SL/TP ordering.
+cap. Change commission and leverage to match the eventual broker.
 
-## Dukascopy now
+M1 prices are valid, non-crossed complete-NBBO best bids. Their recorded spread
+is the full-minute p95 quote spread, rounded up to cents, so it is conservative
+and looks across the minute. Tick mode builds the same signal inputs from its
+own raw files, then uses ordered top-of-book bid/ask observations for entries,
+stops, targets and EOD exits. This milestone supports close-confirmed entries
+and fixed SL/TP/EOD exits. Immediate entry, breakeven and trailing are not yet
+supported in strict tick mode. TAQ supplies observed SIP top-of-book prices; it
+does not model depth, queue position, routing, partial fills or market impact.
 
-The real-data command needs no dates:
+Five M1 dates are excluded because the 16:30–16:44 strategy-clock opening range
+does not contain all 15 minutes: `2015-03-31`, `2018-11-16`, `2020-03-09`,
+`2020-03-12` and `2020-03-16`. The three 2020 gaps match market-wide opening
+circuit-breaker halts. During the rest of the 2018 opening-range window, raw
+quote rows continue but none form a valid non-crossed NBBO. Raw ticks do not
+cover 2015, so that date is an unconfirmed valid-NBBO/source gap. The pipeline
+excludes each entire date and never invents missing prices.
+
+## Optional data sources
+
+The Dukascopy CFD workflow remains available for separate experiments:
 
 ```sh
 python run_all.py --source dukascopy
@@ -121,8 +147,8 @@ broker. `--tz utc` and fixed offsets such as `--tz +3` are available; change
 strategy times accordingly. See [data and clock details](docs/DATA.md).
 
 The downloader writes M1, aggregated M15, an MT5 custom-symbol import file, and
-a metadata JSON. `--ticks` also archives hourly tick files; **the Python engine
-still resolves the path on M1**, so this flag alone does not create a tick backtest.
+a metadata JSON. `--ticks` archives Dukascopy ticks; this is independent from
+the WRDS tick mode, which expects the TAQ Parquet layout under its tick root.
 
 **Verification status:** a two-day real download and direct endpoint checks were
 attempted in this session. DNS resolves, but this network cannot establish a
@@ -146,11 +172,10 @@ lagged H1 EMA slope threshold. Treat every number as a test parameter. The
 range multiplier accepts any positive decimal; compare chosen values in
 separately saved runs.
 
-The supplied research config uses 16:30 / 19:00, 1.5R target, range-multiple stop,
-2% equity sizing, a **1.0 price-unit constant spread assumption**, and EOD at
-22:45. The EA's inherited default has EOD **off**; enable `InpCloseEod` when
-comparing to this config. Contract value, lot rules and costs are placeholders
-until set from the instrument/account you are studying.
+The QQQ profile uses 16:30 / 19:00, a 1.5R target, range-multiple stop, 2% equity
+sizing, recorded TAQ spread, whole-share sizing, and EOD at 22:45. Its declared
+commission and leverage remain research assumptions. The EA's inherited default
+has EOD **off**; enable `InpCloseEod` when comparing to this config.
 
 Each result folder contains:
 

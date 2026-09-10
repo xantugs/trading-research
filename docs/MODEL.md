@@ -59,26 +59,54 @@ does. Fetch additional history when filters are on and inspect early days.
 
 ## Execution
 
-- Bid OHLC is the path. Long entry adds spread, long exits use bid. Short
-  entry uses bid; exit tests add spread to the bid OHLC.
-- Same-bar SL/TP uses sl_first by default. tp_first is an explicit optimistic
+The runner exposes two separate WRDS models. M1 mode reads only the configured
+M1 root. Tick mode reads only the raw tick root, derives its own M1 and signal
+candles, then executes against that root's complete-NBBO events. There is no
+cross-root fallback or data mixing.
+
+### M1 bar model
+
+- Bid OHLC is the path. Long entry adds the selected spread, long exits use bid.
+  Short entry uses bid; exit tests add spread to the bid OHLC.
+- Same-bar SL/TP uses `sl_first` by default. `tp_first` is an explicit optimistic
   alternative. A gap at a later bar open takes precedence and fills at that open.
 - Immediate entries have unknown order between the entry crossing and that
   minute's extremes. BE/trailing use extremes and apply the new stop starting
-  with the next bar. Neither can reproduce tick ordering.
+  with the next bar. Neither can reproduce event ordering.
 - EOD closes on a recorded path bar at/after the selected time. Missing late
-  session data can postpone closing; inspect gaps and END exits.
-- Unresolved positions are marked at the final available close with reason END.
-  These are research marks, not confirmed broker executions.
-- There is no slippage, margin, stop-out, financing/swap, changing currency
-  conversion or exchange holiday/early-close calendar in the Python model.
-- The engine allows independent overlapping positions. Hedging accounts align
-  better; an MT5 netting account can merge/reverse positions and invalidate the
-  one-trade-per-date/direction reconciliation assumption.
-- EA v1.40 persists the daily consumed-signal lock and reconstructs the range
-  after a live restart. Open-trade logging still cannot reconstruct a restart
-  during an existing position or partial fill/exit. Duplicate reconciliation
-  keys are rejected, not multiplied.
+  session data can postpone closing; inspect gaps and `END` exits.
+- Unresolved positions are marked at the final available close with reason
+  `END`. These are research marks rather than confirmed executions.
+
+### Strict top-of-book tick model
+
+- Strategy state and close confirmation come from M1-derived signal candles;
+  M15 is the default signal timeframe. The confirming bar must finish before
+  the order can activate.
+- Quotes are valid, complete, non-crossed NBBO observations ordered by New York
+  time and nanoseconds, then shifted into the `ny+7` strategy clock.
+- The first eligible quote at or after activation plus configured latency fills
+  a long at ask or a short at bid. Longs liquidate at bid and shorts at ask.
+- Stops, targets, and EOD exits fill at the observed executable quote, including
+  jumps through a level. EOD has priority at the first quote on/after its time.
+- Strict coverage checks reject missing or delayed entry/EOD quotes rather than
+  silently substituting an M1 value. The default allowed delay is 1,000 ms.
+- This milestone supports close-confirmed entry with fixed SL/TP/EOD exits. It
+  does not support immediate entry, breakeven, or trailing.
+- Complete NBBO is observed SIP top of book. It does not reveal depth, queue
+  position, hidden liquidity, broker routing, partial-fill behavior, or market
+  impact, so a replayed price is not a guarantee of a live fill.
+
+Neither model includes margin calls, stop-out, financing/swap, changing
+currency conversion, or an exchange holiday/early-close calendar. The engine
+allows independent overlapping positions. Hedging accounts align better; an
+MT5 netting account can merge or reverse positions and invalidate the
+one-trade-per-date/direction reconciliation assumption.
+
+EA v1.40 persists the daily consumed-signal lock and reconstructs the range
+after a live restart. Open-trade logging still cannot reconstruct a restart
+during an existing position or partial fill/exit. Duplicate reconciliation
+keys are rejected, not multiplied.
 
 ## Money and statistics
 
