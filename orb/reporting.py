@@ -113,10 +113,18 @@ def save_result(result: Result, output: Path, source: dict, quality: dict) -> Pa
         ],
     }
     if source.get("execution_model") == "nbbo_top_of_book":
+        strict = bool(source.get("execution_strict"))
+        quote_failure_note = (
+            "Strict tick mode aborts when a required quote-day execution is unusable; "
+            "it never falls back to M1 execution."
+            if strict else
+            "Tick mode never falls back to M1 execution; quote-day executions that cannot "
+            "be supported are recorded and skipped."
+        )
         manifest["limitations"].extend([
             "NBBO replay uses consolidated top-of-book quotes; it does not model routing latency, "
             "queue position, displayed size, market impact or guaranteed broker fills.",
-            "Tick mode is strict and does not fall back to M1 execution when a required quote day is unusable.",
+            quote_failure_note,
             "Tick milestone one supports close-confirmed entries, fixed SL/TP and end-of-day exits only.",
         ])
     write_json(output / "manifest.json", manifest)

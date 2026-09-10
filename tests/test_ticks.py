@@ -153,6 +153,64 @@ def test_tick_store_never_falls_back_to_a_sibling_m1_root(tmp_path):
     assert str(tick_root) in str(error.value)
 
 
+@pytest.mark.parametrize("arrow_type_name", ["time64_us", "time64_ns", "duration_ns"])
+def test_typed_time_m_round_trips_through_parquet_and_matches_ascii(tmp_path, arrow_type_name):
+    """Whatever Parquet hands back for `time_m`, the typed path must fire and agree.
+
+    A Postgres `time` becomes Arrow time64, which pandas surfaces as object dtype
+    holding datetime.time. Missing that case sends 7M-row days down the ASCII
+    path, which allocates over a gigabyte of int64 temporaries and dies.
+    """
+    from datetime import date
+
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    from orb.ticks import _elapsed_nanoseconds, _wrds_day_timestamps
+
+    day = date(2020, 1, 6)
+    clocks = ["04:00:00", "09:30:00.123456", None, "19:59:59.999999"]
+    nanos = [0, 900, 0, 999]
+    text = pd.DataFrame({"date": [day.isoformat()] * 4, "time_m": clocks,
+                         "time_m_nano": nanos})
+    expected = _wrds_day_timestamps(text, day)
+
+    deltas = pd.to_timedelta(pd.Series(clocks))
+    if arrow_type_name == "duration_ns":
+        column = pa.array(deltas.to_numpy(dtype="timedelta64[ns]"), type=pa.duration("ns"))
+    else:
+        unit = "us" if arrow_type_name == "time64_us" else "ns"
+        values = [None if pd.isna(d) else (pd.Timestamp("2000-01-01") + d).time()
+                  for d in deltas]
+        column = pa.array(values, type=pa.time64(unit))
+
+    path = tmp_path / f"{arrow_type_name}.parquet"
+    pq.write_table(pa.table({
+        "date": pa.array([day.isoformat()] * 4),
+        "time_m": column,
+        "time_m_nano": pa.array(nanos),
+    }), path)
+
+    reloaded = pd.read_parquet(path, engine="pyarrow")
+    assert _elapsed_nanoseconds(reloaded["time_m"]) is not None, "typed path did not fire"
+    pd.testing.assert_series_equal(_wrds_day_timestamps(reloaded, day), expected,
+                                   check_index=False)
+
+
+def test_string_time_m_still_uses_the_ascii_parser():
+    from datetime import date
+
+    from orb.ticks import _elapsed_nanoseconds, _wrds_day_timestamps
+
+    day = date(2020, 1, 6)
+    frame = pd.DataFrame({"date": [day.isoformat()] * 2,
+                          "time_m": ["09:30:00", "09:30:00.500000"]})
+    assert _elapsed_nanoseconds(frame["time_m"]) is None
+    stamps = _wrds_day_timestamps(frame, day)
+    assert stamps[0] == pd.Timestamp("2020-01-06 09:30:00")
+    assert stamps[1] == pd.Timestamp("2020-01-06 09:30:00.500000")
+
+
 def test_timedelta_fast_path_matches_the_ascii_parser():
     """The typed shortcut must agree with the string parser on every row.
 

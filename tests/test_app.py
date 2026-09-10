@@ -22,6 +22,7 @@ def app(tmp_path, monkeypatch):
         "ORB_TICK_ROOT", "ORB_TICK_LATENCY_MS", "ORB_TICK_MAX_ENTRY_DELAY_MS",
         "ORB_TICK_MAX_EOD_DELAY_MS", "ORB_TICK_MAX_INTERQUOTE_GAP_MS",
         "ORB_TICK_OFFSET_HOURS", "ORB_TICK_CACHE_DAYS", "ORB_TICK_SYMBOL",
+        "ORB_TICK_STRICT",
     ):
         monkeypatch.delenv(name, raising=False)
     return AppTest.from_file(str(APP_PATH)).run(timeout=30)
@@ -120,6 +121,7 @@ def test_active_tick_mode_passes_strict_backend_and_disables_bar_only_tools(
     monkeypatch.setenv("ORB_TICK_LATENCY_MS", "2.5")
     monkeypatch.setenv("ORB_TICK_MAX_ENTRY_DELAY_MS", "750")
     monkeypatch.setenv("ORB_TICK_MAX_EOD_DELAY_MS", "900")
+    monkeypatch.setenv("ORB_TICK_STRICT", "false")
     calls = []
     progress_callbacks = []
     bar_run_backtest = orb.run_backtest
@@ -147,7 +149,7 @@ def test_active_tick_mode_passes_strict_backend_and_disables_bar_only_tools(
     assert isinstance(execution, NbboExecution)
     assert execution.store.root == root
     assert execution.store.strategy_offset_hours == 7
-    assert execution.config.strict is True
+    assert execution.config.strict is False
     assert execution.config.latency_ms == 2.5
     assert execution.config.max_entry_delay_ms == 750.0
     assert execution.config.max_eod_delay_ms == 900.0

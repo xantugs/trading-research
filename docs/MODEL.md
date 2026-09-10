@@ -1,5 +1,8 @@
 # Model contract and known approximations
 
+> This document records the Python reference model. MT5 is now the active
+> backtester; see [MT5_WRDS.md](MT5_WRDS.md) for the imported-tick contract.
+
 ## Signal and stop rules
 
 The engine has three range constructions. `signal_bar` waits for the selected
@@ -103,7 +106,7 @@ allows independent overlapping positions. Hedging accounts align better; an
 MT5 netting account can merge or reverse positions and invalidate the
 one-trade-per-date/direction reconciliation assumption.
 
-EA v1.40 persists the daily consumed-signal lock and reconstructs the range
+EA v1.50 persists the daily consumed-signal lock and reconstructs the range
 after a live restart. Open-trade logging still cannot reconstruct a restart
 during an existing position or partial fill/exit. Duplicate reconciliation
 keys are rejected, not multiplied.

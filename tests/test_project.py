@@ -75,11 +75,17 @@ def test_report_strict_json_and_no_overwrite(tmp_path):
     result = run_backtest(resample(m1, 15), Params(), path=m1)
     result.stats["profit_factor"] = float("inf")
     target = tmp_path / "result"
-    report = save_result(result, target, {"label": "<script>bad</script>"}, {})
+    report = save_result(result, target, {
+        "label": "<script>bad</script>",
+        "execution_model": "nbbo_top_of_book",
+        "execution_strict": False,
+    }, {})
     assert report.exists()
     assert json.loads((target / "stats.json").read_text())["profit_factor"] is None
     assert "<script>bad</script>" not in report.read_text(encoding="utf-8")
-    assert "source_sha256" in json.loads((target / "manifest.json").read_text())
+    manifest = json.loads((target / "manifest.json").read_text())
+    assert "source_sha256" in manifest
+    assert any("recorded and skipped" in note for note in manifest["limitations"])
     assert (target / "events.csv").exists()
     with pytest.raises(FileExistsError):
         save_result(result, target, {}, {})
@@ -125,12 +131,12 @@ def test_wrds_source_defaults_to_qqq():
     assert args.symbol == "QQQ"
     assert args.config == ROOT / "configs/qqq.json"
     defaulted = parse_args(["--source", "wrds"])
-    assert defaulted.mode == "both" and defaulted.bars == DEFAULT_WRDS_M1_ROOT
+    assert defaulted.mode == "m1" and defaulted.bars == DEFAULT_WRDS_M1_ROOT
 
 
-def test_launcher_no_arguments_runs_both_wrds_qqq_modes():
+def test_launcher_no_arguments_runs_fast_wrds_qqq_m1_mode():
     args = parse_args([])
-    assert args.source == "wrds" and args.mode == "both" and args.app_mode == "tick"
+    assert args.source == "wrds" and args.mode == "m1" and args.app_mode is None
     assert args.symbol == "QQQ" and args.bars == DEFAULT_WRDS_M1_ROOT
     assert args.start == DEFAULT_WRDS_M1_START and args.end == DEFAULT_WRDS_M1_END
     assert parse_args(["--source", "auto"]).source == "wrds"

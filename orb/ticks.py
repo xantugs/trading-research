@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from collections import OrderedDict
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, time
 from io import BytesIO
 from pathlib import Path
 from threading import RLock
@@ -73,17 +73,69 @@ def _day_is_expected(raw: pd.DataFrame, source_date: date) -> np.ndarray:
             .eq(source_date.isoformat()).fillna(False).to_numpy())
 
 
-def _timedelta_day_timestamps(raw: pd.DataFrame, column: pd.Series,
-                              source_date: date) -> pd.Series:
-    """Vectorised timestamps for an already-typed timedelta `time_m` column.
+_NS_PER_UNIT: Final = {"s": 1_000_000_000, "ms": 1_000_000, "us": 1_000, "ns": 1}
+
+
+def _elapsed_nanoseconds(column: pd.Series) -> np.ndarray | None:
+    """Nanoseconds since midnight for a typed `time_m`, or None if it is text.
+
+    Handles what Parquet actually yields for a Postgres ``time``: timedelta64,
+    Arrow time32/time64 (which pandas surfaces as ``datetime.time`` objects), and
+    plain integers. Returns NaN for values that are missing or not a clock.
+    """
+    if pd.api.types.is_timedelta64_dtype(column):
+        values = column.to_numpy(dtype="timedelta64[ns]")
+        out = values.astype("float64")
+        out[np.isnat(values)] = np.nan
+        return out
+
+    if isinstance(column.dtype, pd.ArrowDtype):
+        import pyarrow as pa
+
+        arrow = pa.array(column)
+        unit = getattr(arrow.type, "unit", None)
+        if unit in _NS_PER_UNIT:
+            raw_values = arrow.cast(pa.int64()).to_numpy(zero_copy_only=False)
+            out = raw_values.astype("float64") * _NS_PER_UNIT[unit]
+            out[np.asarray(arrow.is_null())] = np.nan
+            return out
+        return None
+
+    if pd.api.types.is_integer_dtype(column):
+        # Ambiguous without a declared unit; leave it to the ASCII path.
+        return None
+
+    if column.dtype == object:
+        sample = next((value for value in column.to_numpy()[:1000]
+                       if value is not None and value is not pd.NaT), None)
+        if not isinstance(sample, time):
+            return None
+        # datetime.time carries no numpy dtype, so go back through Arrow, which
+        # stores the underlying integer and converts the whole column at once.
+        import pyarrow as pa
+
+        arrow = pa.array(column.to_numpy(), from_pandas=True)
+        unit = getattr(arrow.type, "unit", None)
+        if unit not in _NS_PER_UNIT:
+            return None
+        raw_values = arrow.cast(pa.int64()).to_numpy(zero_copy_only=False)
+        out = raw_values.astype("float64") * _NS_PER_UNIT[unit]
+        out[np.asarray(arrow.is_null())] = np.nan
+        return out
+
+    return None
+
+
+def _typed_day_timestamps(raw: pd.DataFrame, elapsed_float: np.ndarray,
+                          source_date: date) -> pd.Series:
+    """Vectorised timestamps for an already-typed `time_m` column.
 
     Produces exactly what the ASCII parser produces for the same values, without
     materialising a string per row.
     """
     count = len(raw)
-    elapsed = column.to_numpy(dtype="timedelta64[ns]")
-    valid = ~np.isnat(elapsed)
-    elapsed_ns = np.where(valid, elapsed.astype("int64"), 0)
+    valid = np.isfinite(elapsed_float)
+    elapsed_ns = np.where(valid, elapsed_float, 0).astype("int64")
     valid &= (elapsed_ns >= 0) & (elapsed_ns < 86_400 * 1_000_000_000)
 
     if "time_m_nano" in raw:
@@ -113,12 +165,13 @@ def _wrds_day_timestamps(raw: pd.DataFrame, source_date: date) -> pd.Series:
     """
     count = len(raw)
     column = raw["time_m"]
-    if pd.api.types.is_timedelta64_dtype(column):
-        # WRDS Parquet usually lands here: a Postgres `time` becomes timedelta64.
-        # Rendering it to ASCII first invokes a per-row Python formatter, roughly
-        # twenty times the cost of the parse it feeds, so read the nanoseconds
-        # straight out of the array instead.
-        return _timedelta_day_timestamps(raw, column, source_date)
+    elapsed_ns = _elapsed_nanoseconds(column)
+    if elapsed_ns is not None:
+        # WRDS Parquet stores `time_m` as a clock type, not text. Rendering it to
+        # ASCII first invokes a per-row Python formatter and allocates a dozen
+        # int64 temporaries per column - the ASCII path below needs well over a
+        # gigabyte on a seven-million-quote day. Read the nanoseconds directly.
+        return _typed_day_timestamps(raw, elapsed_ns, source_date)
     encoded = column.fillna("").astype(str).to_numpy(dtype="S15")
     chars = encoded.view(np.uint8).reshape(count, 15)
     digit_positions = (0, 1, 3, 4, 6, 7)

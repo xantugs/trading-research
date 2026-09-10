@@ -2,8 +2,9 @@
 """One command: isolated setup, data, backtest, reports, checks and optional app.
 
 python run_all.py
-    Run BOTH modes over 2018-2022 into one run directory, print an m1-vs-tick
-    comparison, and open the app on the tick result.
+    Run the fast WRDS M1 mode over 2018-2022 and open the app.
+python run_all.py --mode both
+    Run both modes into one directory and print an m1-vs-tick comparison.
 python run_all.py --mode m1
     Run only the WRDS M1 leg from C:\\data\\wrds_m1 over 2018-2022.
 python run_all.py --mode m1 --from 2018-01-01 --to 2019-01-01 --no-app
@@ -285,6 +286,8 @@ def _wrds_prepared_signature(requested: Path, input_artifacts: list[dict], args,
         "start": args.start,
         "end_exclusive": args.end,
         "derived_bar_signature": tick_info.get("derived_bar_signature"),
+        "excluded_incomplete_opening_range_dates":
+            tick_info.get("excluded_incomplete_opening_range_dates", []),
         "inputs": input_artifacts,
     }
     return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()[:20]
@@ -320,6 +323,8 @@ def _materialize_wrds_m1(m1, requested: Path, input_artifacts: list[dict], args,
             "start": args.start,
             "end_exclusive": args.end,
             "rows": len(m1),
+            "excluded_incomplete_opening_range_dates":
+                tick_info.get("excluded_incomplete_opening_range_dates", []),
             "input_artifacts": input_artifacts,
             "output_file": target.name,
             "output_sha256": output_hash,
@@ -427,12 +432,8 @@ def pipeline(args) -> tuple[Path, Path | None]:
         if missing_manifests:
             print("WRDS provenance warning: no sibling manifest.json; download the year manifest too", flush=True)
         m1 = _slice_wrds_m1(m1, args.start, args.end)
-        if requested.is_dir() or args.start or args.end:
-            data_path, prepared_signature = _materialize_wrds_m1(
-                m1, requested, input_artifacts, args, tick_info,
-            )
-        else:
-            data_path, prepared_signature = requested, None
+        should_materialize = requested.is_dir() or bool(args.start) or bool(args.end)
+        data_path, prepared_signature = requested, None
         source.update(
             label=(f"WRDS NYSE TAQ / {args.symbol.upper()} event-level NBBO execution "
                    "with signal bars derived from the same raw tick root"
@@ -481,6 +482,20 @@ def pipeline(args) -> tuple[Path, Path | None]:
         print("Excluded incomplete opening-range dates: " + ", ".join(incomplete), flush=True)
         if m1.empty:
             raise ValueError("No rows remain after excluding incomplete opening-range dates")
+    if args.source == "wrds":
+        if should_materialize or incomplete:
+            preparation_info = {
+                **tick_info,
+                "excluded_incomplete_opening_range_dates": incomplete,
+            }
+            data_path, prepared_signature = _materialize_wrds_m1(
+                m1, requested, input_artifacts, args, preparation_info,
+            )
+        source.update(
+            selected_first=str(m1.index[0]),
+            selected_last=str(m1.index[-1]),
+            prepared_signature=prepared_signature,
+        )
     progress.step("data validated")
     if args.data_only:
         print(f"Data ready: {data_path.resolve()} ({len(m1):,} M1 bars)")
@@ -547,7 +562,7 @@ def parse_args(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--mode", choices=["m1", "tick", "both"],
                     help="WRDS mode: M1 uses only the M1 root, tick only the raw tick root, "
-                         "both runs each in turn into one run directory (default)")
+                         "both runs each in turn into one run directory (default: m1)")
     ap.add_argument("--app-mode", choices=["m1", "tick"],
                     help="With --mode both, which finished result the app opens (default: tick)")
     ap.add_argument("--source", choices=["auto", "demo", "dukascopy", "wrds", "csv"], default="wrds",
@@ -617,7 +632,7 @@ def parse_args(argv=None):
         else:
             args.source = "wrds"
     if args.source == "wrds":
-        args.mode = args.mode or "both"
+        args.mode = args.mode or "m1"
         if args.mode in ("m1", "both"):
             args.bars = args.bars or DEFAULT_WRDS_M1_ROOT
             if _is_path_within(args.bars, DEFAULT_WRDS_TICK_ROOT):
@@ -646,6 +661,9 @@ def parse_args(argv=None):
             args.app_mode = args.app_mode or "tick"
             if args.ea_log:
                 ap.error("--ea-log needs one explicit mode")
+            if (_is_path_within(args.bars, args.tick_root)
+                    or _is_path_within(args.tick_root, args.bars)):
+                ap.error("M1 and tick roots must not overlap")
     else:
         if args.app_mode is not None:
             ap.error("--app-mode requires WRDS --mode both")
@@ -686,7 +704,7 @@ def parse_args(argv=None):
         ap.error("--to must be later than --from")
     if args.source == "wrds" and args.symbol == "USATECHIDXUSD":
         args.symbol = "QQQ"
-    if args.mode == "tick":
+    if args.mode in ("tick", "both"):
         for name in ("tick_latency_ms", "tick_max_entry_delay_ms", "tick_max_eod_delay_ms"):
             value = getattr(args, name)
             if not (value >= 0 and value < float("inf")):
@@ -704,6 +722,8 @@ def app_environment(args, data_path: Path, output: Path) -> dict[str, str]:
     tick_only = (
         "ORB_TICK_ROOT", "ORB_WRDS_TICK_ROOT", "ORB_TICK_LATENCY_MS",
         "ORB_TICK_MAX_ENTRY_DELAY_MS", "ORB_TICK_MAX_EOD_DELAY_MS", "ORB_TICK_CACHE_DAYS",
+        "ORB_TICK_MAX_INTERQUOTE_GAP_MS", "ORB_TICK_OFFSET_HOURS", "ORB_TICK_SYMBOL",
+        "ORB_TICK_STRICT",
     )
     for name in ("ORB_WRDS_M1_ROOT", "ORB_SOURCE_ROOT", *tick_only):
         env.pop(name, None)
@@ -723,6 +743,9 @@ def app_environment(args, data_path: Path, output: Path) -> dict[str, str]:
             "ORB_TICK_MAX_ENTRY_DELAY_MS": str(args.tick_max_entry_delay_ms),
             "ORB_TICK_MAX_EOD_DELAY_MS": str(args.tick_max_eod_delay_ms),
             "ORB_TICK_CACHE_DAYS": str(args.tick_cache_days),
+            "ORB_TICK_OFFSET_HOURS": "7",
+            "ORB_TICK_SYMBOL": args.symbol.upper(),
+            "ORB_TICK_STRICT": "true" if args.tick_strict else "false",
         })
     else:
         source = args.bars.resolve() if args.bars is not None else data_path.resolve()

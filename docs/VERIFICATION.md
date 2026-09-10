@@ -1,71 +1,43 @@
 # Verification record — 2026-09-10
 
-## Passed locally
+## Release 1.7.0 checks
 
-Environment: Windows, Python 3.13.5, NumPy 2.3.5, pandas 2.3.3,
-Streamlit 1.63.0, Plotly 6.9.0. The exact installed dependency snapshot is
-`requirements-lock-py313-windows.txt`.
+Local environment: Windows, Python 3.13.5, NumPy 2.3.5 and pandas 2.3.3.
 
-- `python run_all.py --check --compile-mt5 --no-app` completed its setup,
-  compilation, lint, tests, 120-day demo and report pipeline.
-- **116 pytest cases passed**, including engine rules, decision events, MFE/MAE,
-  tick loading, clock/data validation, BI5, cache/retry, strict reconciliation,
-  report, app and launcher cases.
-- `python -m ruff check .`: all checks passed.
-- `python -m pip check`: no broken requirements.
-- `python -m build`: source distribution and engine wheel built.
-- MetaEditor **5.0.0.6140**, EA **1.40**: **0 errors, 0 warnings**.
-  The local compiler log is `mt5/compile.log`; it is not committed.
-- Browser smoke test: the launcher served the app on localhost, the synthetic
-  dataset loaded, Run backtest produced the summary metrics and rendered the
-  balance chart. The browser values agreed with the command-line bundle.
-- Dark-workspace tests cover automatic reruns, unapplied setting changes,
-  saved result snapshots, comparison clearing, empty explorer filters and EA parity status.
-- Browser review at the in-app panel width confirmed dark controls, readable
-  two-column summary cards, the candlestick inspector and saved-run chart.
+- Full suite: **198 pytest tests passed** in 48.81 seconds.
+- Ruff: all checks passed.
+- Package: source distribution and `py3-none-any` wheel built successfully.
+- MetaEditor: EA v1.50 and `Import_WRDS_Ticks` each compiled with **zero errors
+  and zero warnings**.
+- Setup wrapper: installed both binaries into the detected terminal data folder,
+  converted a real WRDS day into MT5 `Common\Files`, and ran the verifier.
 
-Synthetic baseline reproducibility (120 days, seed 42, baseline.json):
-122 trades; 109 traded days; total gross R approximately -6.6670; final
-closed balance 8541.4721 from 10000. These are fixture results, not strategy
-performance evidence. Reports are local under `outputs/`.
+## Real-data conversion smoke
 
-QQQ M1 smoke test (2012 local file, observed-range QQQ profile): 112,430 rows,
-250 complete opening ranges, 240 trades, +11.7198 gross R, +2.0826%
-closed-balance return and 7.5219% closed-balance drawdown. The 1× cash cap held
-maximum gross exposure to 1.0× and reduced mean actual risk to 0.5095%. No M1
-exit bar touched both SL and TP. This is a software/data-behavior check, not
-evidence of an edge. The local file starts at 08:30 New York; as expected, the
-two-hour discussion filter rejects it for insufficient history.
+Source: `QQQ_2018-01-02_quotes.parquet` under the local 2018 WRDS archive.
 
-The installed MT5 symbol catalogue contains `QQQ` with exchange-stock contract
-mode, contract size 1 and whole-share volume steps. Its trade mode is disabled
-and it has no current quote on this account, so native broker testing is not yet
-available despite the symbol name being present.
+- 600,190 source rows;
+- 599,409 valid non-crossed NBBO rows;
+- 1 invalid row and 780 crossed rows removed;
+- 576,543 consecutive unchanged bid/ask states removed;
+- 22,866 MT5 price ticks written, a 26.2× row reduction;
+- 6,023 adjacent output pairs share a millisecond and remain in source order;
+- output schema, timestamps, prices, count, byte size and SHA-256 passed the
+  independent streaming verifier;
+- first tick `2018-01-02 04:00:00.061`, last tick near 20:00 New York.
 
-## Pending or unavailable
+The source window was the entire New York calendar day. The 04:00–20:00 observed
+bounds reflect actual QQQ quote availability that day, not a converter filter.
 
-- Dukascopy live-feed verification: a two-day request for
-  [2025-03-10, 2025-03-12) UTC timed out at the public feed host from this
-  machine. DNS resolved, but TCP/443 failed; HTTPS/HTTP BI5 URLs and the official
-  web export routes all timed out. No real-data result is claimed and no
-  substitute synthetic data was used. Resume and completed-dataset hash checks
-  are verified offline.
-- MT5 visual Strategy Tester smoke test and ten-trade manual review.
-- Real broker EA/Python trade reconciliation.
-- GitHub-hosted Windows/Linux/Python matrix: configured but not yet run on
-  GitHub. Only the local Windows/Python 3.13 environment is verified here.
-- Full local verification of the 2018–2022 WRDS TAQ tick transfer. Cloud output
-  is complete at 2,518 Parquet files / 60 manifests; the parallel yearly-tar
-  download is still in flight. Provider data remains outside Git.
+## Pending terminal evidence
 
-## Dependency replay
+- Run `Import_WRDS_Ticks` inside MT5 and confirm the sample appears under
+  `QQQ.WRDS` with the correct date and tick count.
+- Run one month in Strategy Tester with Every tick based on real ticks.
+- Complete the ten-trade visual audit.
+- Add and validate QQQ commissions before interpreting net performance.
+- Run the configured GitHub Actions matrix after pushing.
 
-On a new Windows/Python 3.13 environment, install
-`requirements-lock-py313-windows.txt`, then install this project with
-`pip install -e . --no-deps`. Use `run_all.py --no-install` to keep that
-environment unchanged. Other platforms use the compatible ranges in
-pyproject.toml and record their resolved versions in each manifest.
-
-The source archive includes the app, scripts, config, tests, EA and docs.
-The wheel provides the `orb` Python package; use a source checkout for the
-complete one-command workflow.
+Compilation and CSV verification demonstrate code and file readiness. They do
+not prove the terminal accepted `CustomTicksReplace` or that strategy results
+match the intended rules; those require the manual MT5 checks above.

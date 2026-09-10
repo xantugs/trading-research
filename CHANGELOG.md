@@ -1,10 +1,40 @@
 # Changelog
 
+## 1.7.0 — 2026-09-10
+
+- Made MT5 the active strategy backtester and Python a WRDS cleaning and
+  verification utility; the older Streamlit and Python execution paths remain
+  available only as historical research tools.
+- Added direct conversion of QQQ complete-NBBO Parquet to MT5 custom-symbol tick
+  CSVs. The converter covers the full `00:00 <= time < next-day 00:00` New York
+  source day without a session filter.
+- Removed invalid and crossed markets plus consecutive unchanged bid/ask states,
+  while preserving every executable price change and source order when multiple
+  changes share an MT5 millisecond.
+- Added per-day manifests and a streaming verifier for schema, timestamps,
+  prices, counts, file size and SHA-256.
+- Added `Import_WRDS_Ticks.mq5`, which configures `QQQ.WRDS`, validates and
+  replaces one source day at a time, and accepts an exact file or wildcard batch.
+- Added a one-command PowerShell setup that bootstraps the WRDS dependency,
+  compiles and installs both MQL5 binaries, converts a date interval, and verifies
+  all staged files.
+- Changed EA defaults to the custom symbol's New York clock: 09:30 range, 12:00
+  cutoff and 15:45 EOD. Disabled the old quote-volume diagnostic by default.
+- Compiled EA v1.50 and the importer locally with zero errors and zero warnings;
+  converted and verified a real 2018-01-02 WRDS sample.
+
 ## 1.6.0 — 2026-09-10
 
 - Added strict, non-overlapping `m1` and `tick` runner modes. M1 reads only the
   external WRDS M1 root; tick reads only the raw WRDS tree and derives its own
   M1 and signal candles.
+- Fixed the quote decode for the dtype WRDS Parquet actually produces. A Postgres
+  `time` becomes Arrow **time64**, which pandas surfaces as *object* dtype holding
+  `datetime.time` - not timedelta64. The typed shortcut now covers timedelta64,
+  Arrow time32/time64 and pandas ArrowDtype, verified by a Parquet round-trip test
+  per type; text still takes the ASCII path. This also halves peak memory on a
+  large day (780 MiB to 397 MiB on 7.3M quotes), which is what killed the 2021
+  replay with `Unable to allocate ... shape (7299503,)`.
 - Sped the NBBO quote decode up roughly **9x** (about 9,550 ms per day to 1,085
   on a synthetic 900k-row day). `time_m` arrives from Parquet as timedelta64, and
   the ASCII fast parser was rendering it to a string per row first - a per-element
@@ -27,12 +57,9 @@
   explicitly so the WRDS Cloud export and the local rebuild cannot drift.
   **M1 years exported under an older window must be rebuilt**: an 08:30 export
   carries roughly 60 fewer bars per day than a 07:30 one.
-- Made `python run_all.py` with no arguments run **both** modes: the M1 leg
-  first, then the tick leg, into `<run>/m1` and `<run>/tick`, followed by a
-  side-by-side trades / gross-R / return comparison. The app opens the tick
-  result; `--app-mode m1` opens the other. `--mode m1` or `--mode tick` still
-  run one leg alone, and the no-overlap guarantees are unchanged - each leg is
-  handed only its own root.
+- Kept `python run_all.py` with no arguments on the fast M1 mode so it cannot
+  unexpectedly begin a multi-hour tick replay. `--mode tick` and `--mode both`
+  remain explicit historical-research choices with separate input roots.
 - Defaulted M1 mode to `[2018-01-01, 2023-01-01)`, the span the raw tick archive
   covers, so an M1 run and a tick run of the same settings describe the same
   trading days. `--from`/`--to`, `--full-history` and the `ORB_WRDS_M1_START` /

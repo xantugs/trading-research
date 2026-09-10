@@ -29,9 +29,8 @@
 //  -----
 //  - Save to  <MT5 data folder>\MQL5\Experts\ORB_Backtest.mq5  and press
 //    F7 (Compile) in MetaEditor.
-//  - ALL TIMES ARE BROKER SERVER TIME.  Look at the clock in the MT5 Market
-//    Watch window: if your broker shows 16:30 when New York is at 09:30,
-//    set ORB hour = 16, minute = 30, cutoff = 19 (= 12:00 NY).
+//  - ALL TIMES ARE SYMBOL HISTORY TIME.  The WRDS QQQ custom symbol keeps New
+//    York wall time, so its defaults are range = 09:30 and cutoff = 12:00.
 //  - Strategy Tester: use "Every tick based on real ticks" where available,
 //    otherwise "1 minute OHLC". Stops and targets need an intrabar path even
 //    when entries use close confirmation.
@@ -41,16 +40,16 @@
 //
 //+------------------------------------------------------------------+
 #property copyright   "echo"
-#property version     "1.40"
+#property version     "1.50"
 #property description "Opening Range Breakout EA - research / backtesting tool."
 #property description "Captures one candle's high/low each day and trades the first"
 #property description "confirmed breakout of the day before a cutoff hour."
-#property description "All times are BROKER SERVER time."
+#property description "Defaults use New York wall time for the WRDS custom symbol."
 
 #include <Trade/Trade.mqh>
 
 #define ORB_BOX_PREFIX "ORB_box_"
-#define ORB_VERSION    "1.40"
+#define ORB_VERSION    "1.50"
 
 //+------------------------------------------------------------------+
 //| Enums (the trailing comments are what MetaTrader shows in the    |
@@ -113,11 +112,11 @@ enum ENUM_ORB_STOP_MODE
 //+------------------------------------------------------------------+
 //| Inputs                                                           |
 //+------------------------------------------------------------------+
-input group "Timing (broker server time)"
+input group "Timing (symbol history time)"
 input ENUM_TIMEFRAMES      InpTimeframe      = PERIOD_M15;          // Opening-range / signal timeframe
-input ENUM_ORB_HOUR        InpOrbHour        = HOUR_16;             // Opening-range candle: hour
+input ENUM_ORB_HOUR        InpOrbHour        = HOUR_09;             // Opening-range candle: hour
 input int                  InpOrbMinute      = 30;                  // Opening-range candle: minute
-input ENUM_ORB_HOUR        InpCutoffHour     = HOUR_19;             // No new entries from this hour
+input ENUM_ORB_HOUR        InpCutoffHour     = HOUR_12;             // No new entries from this hour
 
 input group "Strategy"
 input ENUM_ORB_ENTRY_MODE  InpEntryMode      = ENTRY_CLOSE_CONFIRM; // Entry mode
@@ -137,7 +136,7 @@ input double               InpRiskPercent    = 2.0;                 // Risk per 
 
 input group "End of day"
 input bool                 InpCloseEod       = false;               // Close all positions at end of session
-input ENUM_ORB_HOUR        InpCloseHour      = HOUR_22;             // Close from this hour ...
+input ENUM_ORB_HOUR        InpCloseHour      = HOUR_15;             // Close from this hour ...
 input int                  InpCloseMinute    = 45;                  // ... and this minute
 
 input group "Opening-range filters"
@@ -147,7 +146,7 @@ input double               InpMaxRangeAtr    = 0.0;                 // Skip day 
 input int                  InpRangeLookbackMinutes=120;              // Prior window for range proportion
 input double               InpMaxRangeLookbackRatio=0.0;             // Max range / prior span (0 = off)
 input int                  InpVolumeLookback = 8;                   // Candles before the range candle for the volume check
-input double               InpVolumeSpikeMin = 1.5;                 // Warn if range-candle volume < average x this (0 = off)
+input double               InpVolumeSpikeMin = 0.0;                 // Quote-count diagnostic (0 = off for cleaned WRDS ticks)
 input bool                 InpSkipNoSpike    = false;               // Skip the day when the volume check fails
 
 input group "Higher-timeframe trend filter"

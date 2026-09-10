@@ -130,6 +130,9 @@ def test_app_environment_removes_opposite_mode_state(tmp_path, monkeypatch):
     assert tick_env["ORB_TICK_MAX_ENTRY_DELAY_MS"] == "20.0"
     assert tick_env["ORB_TICK_MAX_EOD_DELAY_MS"] == "30.0"
     assert tick_env["ORB_TICK_CACHE_DAYS"] == "1"
+    assert tick_env["ORB_TICK_OFFSET_HOURS"] == "7"
+    assert tick_env["ORB_TICK_SYMBOL"] == "QQQ"
+    assert tick_env["ORB_TICK_STRICT"] == "false"
     assert "ORB_WRDS_M1_ROOT" not in tick_env
 
     m1_root = tmp_path / "wrds_m1"
@@ -142,6 +145,7 @@ def test_app_environment_removes_opposite_mode_state(tmp_path, monkeypatch):
     assert m1_env["ORB_EXECUTION_TIMING"] == "bar_ohlc"
     assert "ORB_TICK_ROOT" not in m1_env and "ORB_WRDS_TICK_ROOT" not in m1_env
     assert "ORB_TICK_LATENCY_MS" not in m1_env
+    assert "ORB_TICK_STRICT" not in m1_env
 
 
 def test_wrds_date_slice_is_half_open_and_rejects_empty_ranges():
@@ -197,8 +201,12 @@ def test_wrds_m1_pipeline_filters_dates_and_reports_unmanifested_input(tmp_path,
     bars = tmp_path / "wrds_m1" / "QQQ_SAMPLE_M1.csv.gz"
     bars.parent.mkdir()
     raw = make_synthetic_m1(days=5, seed=9)
-    raw.to_csv(bars, compression={"method": "gzip", "mtime": 0})
     dates = sorted(raw.index.normalize().unique())
+    rejected_date = dates[1]
+    missing = raw.index[(raw.index.normalize() == rejected_date)
+                        & (raw.index.hour == 16) & (raw.index.minute == 35)][0]
+    raw = raw.drop(missing)
+    raw.to_csv(bars, compression={"method": "gzip", "mtime": 0})
     start = dates[1].date().isoformat()
     end = dates[3].date().isoformat()
     output = tmp_path / "result"
@@ -214,12 +222,17 @@ def test_wrds_m1_pipeline_filters_dates_and_reports_unmanifested_input(tmp_path,
     selected = load_bars(data_path)
     assert selected.index.min() >= pd.Timestamp(start)
     assert selected.index.max() < pd.Timestamp(end)
+    assert rejected_date not in selected.index.normalize()
     assert data_path.is_relative_to(fake_repo / ".cache" / "wrds_prepared" / "m1")
     assert result_path == output
     source = json.loads((output / "manifest.json").read_text(encoding="utf-8"))["source"]
     assert source["manifest_validation"] == "manifests not supplied"
     assert source["requested_start"] == start and source["requested_end_exclusive"] == end
     assert source["input_artifacts"] == [_input_artifact(bars)]
+    prepared = json.loads((data_path.parent / "manifest.json").read_text(encoding="utf-8"))
+    assert prepared["excluded_incomplete_opening_range_dates"] == [
+        rejected_date.date().isoformat()
+    ]
 
 
 def test_m1_mode_defaults_to_the_tick_comparable_window():
@@ -268,16 +281,16 @@ def test_default_window_changes_the_prepared_signature(tmp_path):
         run_all._wrds_prepared_signature(root, inputs, full, {})
 
 
-def test_bare_launcher_prepares_both_modes():
-    """`python run_all.py` alone must resolve both roots and run both legs."""
+def test_bare_launcher_defaults_to_fast_m1_mode():
+    """`python run_all.py` alone must not start the multi-hour tick replay."""
     args = parse_args([])
-    assert args.mode == "both" and args.app_mode == "tick"
+    assert args.mode == "m1" and args.app_mode is None
     assert args.bars == DEFAULT_WRDS_M1_ROOT
-    assert args.tick_root == DEFAULT_WRDS_TICK_ROOT
+    assert args.tick_root is None
 
 
 def test_both_legs_are_isolated_from_each_other(tmp_path):
-    args = parse_args([])
+    args = parse_args(["--mode", "both"])
 
     m1 = leg_args(args, "m1", tmp_path / "m1")
     assert m1.mode == "m1" and m1.tick_root is None and m1.bars == DEFAULT_WRDS_M1_ROOT
@@ -293,7 +306,7 @@ def test_both_legs_are_isolated_from_each_other(tmp_path):
 
 
 def test_explicit_dates_apply_to_both_legs(tmp_path):
-    args = parse_args(["--from", "2019-01-01", "--to", "2020-01-01"])
+    args = parse_args(["--mode", "both", "--from", "2019-01-01", "--to", "2020-01-01"])
     assert args.explicit_dates
     for mode in ("m1", "tick"):
         leg = leg_args(args, mode, tmp_path / mode)
@@ -313,7 +326,7 @@ def test_run_both_writes_one_directory_per_mode(tmp_path, monkeypatch):
         return leg.output / "bars.csv", leg.output
 
     monkeypatch.setattr(run_all, "pipeline", fake_pipeline)
-    args = parse_args(["--output", str(tmp_path / "run")])
+    args = parse_args(["--mode", "both", "--output", str(tmp_path / "run")])
     _, output, extra = run_both(args)
 
     assert [mode for mode, _ in seen] == ["m1", "tick"]
@@ -329,7 +342,7 @@ def test_run_both_refuses_a_populated_run_directory(tmp_path, monkeypatch):
     existing = tmp_path / "run"
     existing.mkdir()
     (existing / "leftover.txt").write_text("x", encoding="utf-8")
-    args = parse_args(["--output", str(existing)])
+    args = parse_args(["--mode", "both", "--output", str(existing)])
     with pytest.raises(ValueError, match="already exists"):
         run_both(args)
 
@@ -354,6 +367,15 @@ def test_both_mode_still_rejects_a_tick_root_inside_the_m1_root(tmp_path, monkey
         parse_args(["--mode", "both", "--tick-root", str(m1_root / "nested")])
 
 
+def test_both_mode_rejects_two_custom_overlapping_roots(tmp_path):
+    root = tmp_path / "licensed_data"
+    nested = root / "ticks"
+    with pytest.raises(SystemExit):
+        parse_args(["--mode", "both", "--bars", str(root), "--tick-root", str(nested)])
+    with pytest.raises(SystemExit):
+        parse_args(["--mode", "both", "--bars", str(nested), "--tick-root", str(root)])
+
+
 def test_session_window_covers_premarket_through_after_hours():
     """Keep every minute the market quotes, not just the regular session."""
     args = parse_args([])
@@ -365,7 +387,8 @@ def test_session_window_covers_premarket_through_after_hours():
 
 
 def test_session_window_reaches_both_legs_and_the_cache_key(tmp_path):
-    args = parse_args(["--session-start", "08:00:00", "--session-end", "17:00:00"])
+    args = parse_args(["--mode", "both", "--session-start", "08:00:00",
+                       "--session-end", "17:00:00"])
     for mode in ("m1", "tick"):
         leg = leg_args(args, mode, tmp_path / mode)
         assert leg.session_start == "08:00:00" and leg.session_end == "17:00:00"
@@ -391,14 +414,22 @@ def test_session_window_rejects_nonsense(argv):
 
 def test_unreplayable_executions_are_recorded_not_fatal_by_default():
     """One thin session must not abort a multi-hour replay."""
-    assert parse_args([]).tick_strict is False
-    assert parse_args(["--tick-strict"]).tick_strict is True
+    assert parse_args(["--mode", "tick"]).tick_strict is False
+    assert parse_args(["--mode", "tick", "--tick-strict"]).tick_strict is True
 
 
 def test_tick_strict_reaches_both_legs(tmp_path):
-    args = parse_args(["--tick-strict"])
+    args = parse_args(["--mode", "both", "--tick-strict"])
     for mode in ("m1", "tick"):
         assert leg_args(args, mode, tmp_path / mode).tick_strict is True
+
+
+@pytest.mark.parametrize("flag", [
+    "--tick-latency-ms", "--tick-max-entry-delay-ms", "--tick-max-eod-delay-ms",
+])
+def test_both_mode_validates_tick_numbers_before_starting_m1(flag):
+    with pytest.raises(SystemExit):
+        parse_args(["--mode", "both", flag, "-1"])
 
 
 def test_unreplayable_summary_separates_data_failures_from_strategy_skips():

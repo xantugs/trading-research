@@ -128,8 +128,9 @@ def build_tick_execution(root: str, strategy_offset_hours: int, symbol: str,
                          max_cache_days: int, latency_ms: float,
                          max_entry_delay_ms: float | None,
                          max_eod_delay_ms: float | None,
-                         max_interquote_gap_ms: float | None) -> NbboExecution:
-    """Build one bounded, strict NBBO backend per launcher configuration."""
+                         max_interquote_gap_ms: float | None,
+                         strict: bool) -> NbboExecution:
+    """Build one bounded NBBO backend per launcher configuration."""
     store = TickStore(
         root,
         strategy_offset_hours=strategy_offset_hours,
@@ -141,7 +142,7 @@ def build_tick_execution(root: str, strategy_offset_hours: int, symbol: str,
         max_entry_delay_ms=max_entry_delay_ms,
         max_eod_delay_ms=max_eod_delay_ms,
         max_interquote_gap_ms=max_interquote_gap_ms,
-        strict=True,
+        strict=strict,
     )
     return NbboExecution(store, config)
 
@@ -186,6 +187,18 @@ def _env_number(name: str, default: float | int | None, *, integer: bool = False
     if value < 0:
         raise ValueError(f"{name} must be nonnegative, received {raw!r}.")
     return value
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    raw = os.environ.get(name)
+    if raw is None or not raw.strip():
+        return default
+    value = raw.strip().lower()
+    if value in {"1", "true", "yes", "on"}:
+        return True
+    if value in {"0", "false", "no", "off"}:
+        return False
+    raise ValueError(f"{name} must be true or false, received {raw!r}.")
 
 
 def _mode_command(mode: str) -> str:
@@ -238,8 +251,9 @@ def _tick_execution_from_environment() -> tuple[NbboExecution, tuple]:
     entry_delay = _env_number("ORB_TICK_MAX_ENTRY_DELAY_MS", 1_000.0)
     eod_delay = _env_number("ORB_TICK_MAX_EOD_DELAY_MS", 1_000.0)
     max_gap = _env_number("ORB_TICK_MAX_INTERQUOTE_GAP_MS", None)
+    strict = _env_bool("ORB_TICK_STRICT", False)
     symbol = os.environ.get("ORB_TICK_SYMBOL", "QQQ").strip().upper()
-    settings = (root, offset, symbol, cache_days, latency, entry_delay, eod_delay, max_gap)
+    settings = (root, offset, symbol, cache_days, latency, entry_delay, eod_delay, max_gap, strict)
     return build_tick_execution(*settings), settings
 
 
@@ -484,7 +498,7 @@ def sidebar():
                        "Broker margin, financing and per-order commission minimums are not modeled.")
         st.divider()
         st.caption(("WRDS NBBO top-of-book replay" if tick_mode else "Python bar simulation") +
-                   " · EA v1.40\n\nResearch results need broker reconciliation.")
+                   " · EA v1.50\n\nResearch results need broker reconciliation.")
     return mode, choice, upload, st.session_state.signal_tf, _params_from_state(), run
 
 
@@ -1179,7 +1193,7 @@ def main():
         try:
             execution, execution_settings = _tick_execution_from_environment()
         except (ValueError, OSError, KeyError) as exc:
-            st.error(f"Cannot prepare strict NBBO execution: {exc}")
+            st.error(f"Cannot prepare NBBO execution: {exc}")
             st.code(_mode_command(mode), language="powershell")
             return
     try:

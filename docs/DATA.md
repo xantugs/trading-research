@@ -1,5 +1,9 @@
 # Data contract and sources
 
+> This document describes the retained Python/M1 research tooling. The active
+> pipeline converts full-day WRDS NBBO events directly to MT5 ticks; see
+> [MT5_WRDS.md](MT5_WRDS.md).
+
 ## Canonical bars
 
 CSV columns: `time,open,high,low,close,tick_volume,spread`. The first column is
