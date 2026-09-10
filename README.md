@@ -114,10 +114,10 @@ breakeven, trailing and CSV diagnostics. For the initial data validation, use
 the simplest fixed setup and disable optional management and filters; add them
 back one at a time after trades match the rules by inspection.
 
-The previous Python engine, Streamlit app, M1 pipeline, Dukascopy utilities and
-reconciliation tools remain in the repository as historical research tooling.
-They are not part of the active WRDS-to-MT5 workflow and do not supply or alter
-the imported custom-symbol ticks.
+The Streamlit application has been removed. The previous Python engine, M1
+pipeline, Dukascopy utilities and reconciliation tools remain as historical
+research tooling. They are not part of the active WRDS-to-MT5 workflow and do
+not supply or alter the imported custom-symbol ticks.
 
 ## Repository layout
 

@@ -41,6 +41,12 @@ on disk because CSV is uncompressed. Import a batch, confirm it in MT5, then
 delete those generated CSVs before preparing the next batch. Never delete the
 source Parquet until the imported history has passed the MT5 smoke test.
 
+A 20-day sample distributed across 2018–2022 projected about **22.85 GiB** of
+price-change CSV from the 17.53 GiB quote-Parquet layer. The complete local raw
+tree is 23.59 GiB because it also contains consolidated trades. Storing all CSVs,
+the raw archive and MT5's internal custom-symbol history together may exceed the
+available disk space, which is why staged monthly import and cleanup is required.
+
 ## Import
 
 In MT5, refresh Navigator and run `Import_WRDS_Ticks` under Scripts. Use an exact
@@ -89,3 +95,7 @@ not configured, so initial tester results are gross.
 The first actual runtime call to `CustomTicksReplace` and a visual EA smoke test
 must happen inside MT5. Compilation and file verification cannot substitute for
 that terminal-level check.
+
+WRDS data is licensed and is excluded from Git. GitHub receives the converter,
+importer, manifests/tests built from synthetic fixtures, and documentation; it
+does not receive real QQQ rows.

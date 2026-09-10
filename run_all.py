@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""One command: isolated setup, data, backtest, reports, checks and optional app.
+"""Legacy Python research runner for data, backtests, reports, and checks.
 
 python run_all.py
-    Run the fast WRDS M1 mode over 2018-2022 and open the app.
+    Run the fast WRDS M1 mode over 2018-2022 and write a report.
 python run_all.py --mode both
     Run both modes into one directory and print an m1-vs-tick comparison.
 python run_all.py --mode m1
@@ -563,8 +563,6 @@ def parse_args(argv=None):
     ap.add_argument("--mode", choices=["m1", "tick", "both"],
                     help="WRDS mode: M1 uses only the M1 root, tick only the raw tick root, "
                          "both runs each in turn into one run directory (default: m1)")
-    ap.add_argument("--app-mode", choices=["m1", "tick"],
-                    help="With --mode both, which finished result the app opens (default: tick)")
     ap.add_argument("--source", choices=["auto", "demo", "dukascopy", "wrds", "csv"], default="wrds",
                     help="Data provider; default is WRDS QQQ M1 (demo and Dukascopy are explicit)")
     ap.add_argument("--from", dest="start",
@@ -615,8 +613,7 @@ def parse_args(argv=None):
     ap.add_argument("--output", type=Path, help="New result directory; existing directories are refused")
     ap.add_argument("--check", action="store_true", help="Run lint and tests before the pipeline")
     ap.add_argument("--compile-mt5", action="store_true", help="Compile EA with installed MetaEditor (Windows)")
-    ap.add_argument("--no-app", action="store_true", help="Finish after writing reports")
-    ap.add_argument("--port", type=int, default=8501)
+    ap.add_argument("--no-app", action="store_true", help=argparse.SUPPRESS)
     ap.add_argument("--no-install", action="store_true", help="Use current Python; no package changes")
     ap.add_argument("--reinstall", action="store_true")
     ap.add_argument("--ea-log", type=Path, help="Reconcile local CSV against an EA log; requires --source csv")
@@ -655,18 +652,13 @@ def parse_args(argv=None):
             ap.error("M1 mode does not accept --tick-root")
         if args.mode == "tick" and args.full_history:
             ap.error("--full-history applies to the M1 leg; tick mode already uses its whole root")
-        if args.app_mode and args.mode != "both":
-            ap.error("--app-mode requires --mode both")
         if args.mode == "both":
-            args.app_mode = args.app_mode or "tick"
             if args.ea_log:
                 ap.error("--ea-log needs one explicit mode")
             if (_is_path_within(args.bars, args.tick_root)
                     or _is_path_within(args.tick_root, args.bars)):
                 ap.error("M1 and tick roots must not overlap")
     else:
-        if args.app_mode is not None:
-            ap.error("--app-mode requires WRDS --mode both")
         if args.tick_root is not None:
             ap.error("--tick-root requires --mode tick")
         if args.full_history:
@@ -681,8 +673,6 @@ def parse_args(argv=None):
         ap.error("--session-end must be later than --session-start")
     if args.demo_days < 1:
         ap.error("--demo-days must be positive")
-    if not 1 <= args.port <= 65535:
-        ap.error("--port must be 1-65535")
     if args.ea_log and args.source != "csv":
         ap.error("--ea-log requires --source csv with data from the same MT5 run")
     if args.ea_log and args.data_only:
@@ -716,54 +706,10 @@ def parse_args(argv=None):
     return args
 
 
-def app_environment(args, data_path: Path, output: Path) -> dict[str, str]:
-    """Build an explicit, mode-isolated environment for the Streamlit process."""
-    env = os.environ.copy()
-    tick_only = (
-        "ORB_TICK_ROOT", "ORB_WRDS_TICK_ROOT", "ORB_TICK_LATENCY_MS",
-        "ORB_TICK_MAX_ENTRY_DELAY_MS", "ORB_TICK_MAX_EOD_DELAY_MS", "ORB_TICK_CACHE_DAYS",
-        "ORB_TICK_MAX_INTERQUOTE_GAP_MS", "ORB_TICK_OFFSET_HOURS", "ORB_TICK_SYMBOL",
-        "ORB_TICK_STRICT",
-    )
-    for name in ("ORB_WRDS_M1_ROOT", "ORB_SOURCE_ROOT", *tick_only):
-        env.pop(name, None)
-    env["ORB_DATA_FILE"] = str(data_path.resolve())
-    env["ORB_PARAMS_FILE"] = str((output / "params.json").resolve())
-    env["ORB_SIGNAL_TF"] = str(args.tf)
-    env["ORB_BACKTEST_MODE"] = args.mode or "m1"
-    if args.mode == "tick":
-        root = str(args.tick_root.resolve())
-        env.update({
-            "ORB_SOURCE_ROOT": root,
-            "ORB_TICK_ROOT": root,
-            "ORB_WRDS_TICK_ROOT": root,
-            "ORB_EXECUTION_MODEL": "nbbo_top_of_book",
-            "ORB_EXECUTION_TIMING": "event_level",
-            "ORB_TICK_LATENCY_MS": str(args.tick_latency_ms),
-            "ORB_TICK_MAX_ENTRY_DELAY_MS": str(args.tick_max_entry_delay_ms),
-            "ORB_TICK_MAX_EOD_DELAY_MS": str(args.tick_max_eod_delay_ms),
-            "ORB_TICK_CACHE_DAYS": str(args.tick_cache_days),
-            "ORB_TICK_OFFSET_HOURS": "7",
-            "ORB_TICK_SYMBOL": args.symbol.upper(),
-            "ORB_TICK_STRICT": "true" if args.tick_strict else "false",
-        })
-    else:
-        source = args.bars.resolve() if args.bars is not None else data_path.resolve()
-        env.update({
-            "ORB_SOURCE_ROOT": str(source),
-            "ORB_EXECUTION_MODEL": "m1_bar_path",
-            "ORB_EXECUTION_TIMING": "bar_ohlc",
-        })
-        if args.mode == "m1" and args.source == "wrds":
-            env["ORB_WRDS_M1_ROOT"] = str(source)
-    return env
-
-
 def leg_args(args, mode: str, output: Path):
     """Clone the parsed arguments for one concrete leg of a --mode both run."""
     leg = copy.copy(args)
     leg.mode = mode
-    leg.app_mode = None
     leg.output = output
     leg.check = False
     leg.compile_mt5 = False
@@ -783,25 +729,23 @@ def leg_args(args, mode: str, output: Path):
     return leg
 
 
-def run_both(args) -> tuple[Path, Path, dict[str, Path]]:
+def run_both(args) -> tuple[Path, Path]:
     """Run the M1 leg then the tick leg into one timestamped run directory."""
     parent = args.output or ROOT / "outputs" / datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S_%fZ")
     if parent.exists() and any(parent.iterdir()):
         raise ValueError(f"Run directory already exists and is not empty: {parent}")
-    legs, outputs = {}, {}
+    outputs = {}
     for mode in ("m1", "tick"):
         print(f"\n=== {mode} mode ===", flush=True)
         leg = leg_args(args, mode, parent / mode)
         data_path, output = pipeline(leg)
         if output is None:
             raise ValueError(f"{mode} leg produced no report")
-        legs[mode] = leg
         outputs[mode] = (data_path, output)
     _print_mode_comparison(outputs)
-    chosen = args.app_mode or "tick"
-    data_path, output = outputs[chosen]
-    print(f"\nApp opens the {chosen} result; both bundles are under {parent.resolve()}", flush=True)
-    return data_path, output, {"leg": legs[chosen]}
+    data_path, output = outputs["tick"]
+    print(f"\nBoth bundles are under {parent.resolve()}", flush=True)
+    return data_path, output
 
 
 def _print_mode_comparison(outputs: dict) -> None:
@@ -844,10 +788,8 @@ def main() -> int:
         if args.check:
             command([sys.executable, "-m", "ruff", "check", "."])
             command([sys.executable, "-m", "pytest", "-q"])
-        app_args = args
         if args.mode == "both":
-            data_path, output, extra = run_both(args)
-            app_args = extra["leg"]
+            data_path, output = run_both(args)
         else:
             data_path, output = pipeline(args)
         if output is None:
@@ -859,11 +801,6 @@ def main() -> int:
                      "--bars", data_path, "--m1", data_path, "--report", output / "reconcile.csv",
                      "--strict", "--spread", str(p.spread), "--point", str(p.point),
                      *(["--use-data-spread"] if p.use_data_spread else [])])
-        if not args.no_app:
-            env = app_environment(app_args, data_path, output)
-            print(f"App: http://localhost:{args.port} (Ctrl+C to stop)", flush=True)
-            command([sys.executable, "-m", "streamlit", "run", "app.py",
-                     "--server.address=localhost", f"--server.port={args.port}"], env=env)
         return 0
     except KeyboardInterrupt:
         print("\nStopped.")

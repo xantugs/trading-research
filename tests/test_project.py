@@ -136,7 +136,7 @@ def test_wrds_source_defaults_to_qqq():
 
 def test_launcher_no_arguments_runs_fast_wrds_qqq_m1_mode():
     args = parse_args([])
-    assert args.source == "wrds" and args.mode == "m1" and args.app_mode is None
+    assert args.source == "wrds" and args.mode == "m1"
     assert args.symbol == "QQQ" and args.bars == DEFAULT_WRDS_M1_ROOT
     assert args.start == DEFAULT_WRDS_M1_START and args.end == DEFAULT_WRDS_M1_END
     assert parse_args(["--source", "auto"]).source == "wrds"

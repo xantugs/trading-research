@@ -2,6 +2,8 @@
 
 ## 1.7.0 — 2026-09-10
 
+- Removed the Streamlit application, its UI tests, configuration and dependency.
+  The repository now opens no web service; MT5 is the only active backtest UI.
 - Made MT5 the active strategy backtester and Python a WRDS cleaning and
   verification utility; the older Streamlit and Python execution paths remain
   available only as historical research tools.

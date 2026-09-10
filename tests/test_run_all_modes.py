@@ -22,7 +22,6 @@ from run_all import (
     _slice_wrds_m1,
     _tick_source_signature,
     _unreplayable_executions,
-    app_environment,
     leg_args,
     parse_args,
     pipeline,
@@ -106,46 +105,6 @@ def test_tick_signal_cache_is_built_only_from_explicit_tick_root(tmp_path, monke
     assert str(sibling_m1) not in str(years)
     assert _prepare_tick_signal_bars(args)[0] == years
     assert len(calls) == 1
-
-
-def test_app_environment_removes_opposite_mode_state(tmp_path, monkeypatch):
-    monkeypatch.setenv("ORB_WRDS_M1_ROOT", "stale-m1")
-    monkeypatch.setenv("ORB_TICK_ROOT", "stale-ticks")
-    monkeypatch.setenv("ORB_TICK_LATENCY_MS", "999")
-    data_path, output = tmp_path / "signals.csv.gz", tmp_path / "result"
-    tick_root = tmp_path / "wrds_ticks"
-    tick = parse_args([
-        "--mode", "tick", "--tick-root", str(tick_root),
-        "--tick-latency-ms", "5", "--tick-max-entry-delay-ms", "20",
-        "--tick-max-eod-delay-ms", "30", "--tick-cache-days", "1",
-    ])
-    tick_env = app_environment(tick, data_path, output)
-
-    assert tick_env["ORB_BACKTEST_MODE"] == "tick"
-    assert tick_env["ORB_SOURCE_ROOT"] == str(tick_root.resolve())
-    assert tick_env["ORB_WRDS_TICK_ROOT"] == str(tick_root.resolve())
-    assert tick_env["ORB_EXECUTION_MODEL"] == "nbbo_top_of_book"
-    assert tick_env["ORB_EXECUTION_TIMING"] == "event_level"
-    assert tick_env["ORB_TICK_LATENCY_MS"] == "5.0"
-    assert tick_env["ORB_TICK_MAX_ENTRY_DELAY_MS"] == "20.0"
-    assert tick_env["ORB_TICK_MAX_EOD_DELAY_MS"] == "30.0"
-    assert tick_env["ORB_TICK_CACHE_DAYS"] == "1"
-    assert tick_env["ORB_TICK_OFFSET_HOURS"] == "7"
-    assert tick_env["ORB_TICK_SYMBOL"] == "QQQ"
-    assert tick_env["ORB_TICK_STRICT"] == "false"
-    assert "ORB_WRDS_M1_ROOT" not in tick_env
-
-    m1_root = tmp_path / "wrds_m1"
-    m1 = parse_args(["--mode", "m1", "--bars", str(m1_root)])
-    m1_env = app_environment(m1, data_path, output)
-    assert m1_env["ORB_BACKTEST_MODE"] == "m1"
-    assert m1_env["ORB_SOURCE_ROOT"] == str(m1_root.resolve())
-    assert m1_env["ORB_WRDS_M1_ROOT"] == str(m1_root.resolve())
-    assert m1_env["ORB_EXECUTION_MODEL"] == "m1_bar_path"
-    assert m1_env["ORB_EXECUTION_TIMING"] == "bar_ohlc"
-    assert "ORB_TICK_ROOT" not in m1_env and "ORB_WRDS_TICK_ROOT" not in m1_env
-    assert "ORB_TICK_LATENCY_MS" not in m1_env
-    assert "ORB_TICK_STRICT" not in m1_env
 
 
 def test_wrds_date_slice_is_half_open_and_rejects_empty_ranges():
@@ -284,7 +243,7 @@ def test_default_window_changes_the_prepared_signature(tmp_path):
 def test_bare_launcher_defaults_to_fast_m1_mode():
     """`python run_all.py` alone must not start the multi-hour tick replay."""
     args = parse_args([])
-    assert args.mode == "m1" and args.app_mode is None
+    assert args.mode == "m1"
     assert args.bars == DEFAULT_WRDS_M1_ROOT
     assert args.tick_root is None
 
@@ -327,14 +286,12 @@ def test_run_both_writes_one_directory_per_mode(tmp_path, monkeypatch):
 
     monkeypatch.setattr(run_all, "pipeline", fake_pipeline)
     args = parse_args(["--mode", "both", "--output", str(tmp_path / "run")])
-    _, output, extra = run_both(args)
+    _, output = run_both(args)
 
     assert [mode for mode, _ in seen] == ["m1", "tick"]
     assert (tmp_path / "run" / "m1" / "stats.json").exists()
     assert (tmp_path / "run" / "tick" / "stats.json").exists()
-    # --app-mode defaults to tick, so the app opens the event-level result.
     assert output == tmp_path / "run" / "tick"
-    assert extra["leg"].mode == "tick"
 
 
 def test_run_both_refuses_a_populated_run_directory(tmp_path, monkeypatch):
@@ -348,9 +305,6 @@ def test_run_both_refuses_a_populated_run_directory(tmp_path, monkeypatch):
 
 
 @pytest.mark.parametrize("argv, match", [
-    (["--app-mode", "m1", "--mode", "m1"], "requires --mode both"),
-    (["--app-mode", "tick", "--mode", "tick"], "requires --mode both"),
-    (["--source", "demo", "--app-mode", "m1"], "requires WRDS"),
     (["--mode", "both", "--ea-log", "x.csv"], None),
 ])
 def test_both_mode_rejects_incoherent_combinations(argv, match):

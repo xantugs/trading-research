@@ -112,7 +112,7 @@ tick mode instead replays ordered NBBO quotes for executable-side fills.
 TAQ source timestamps are New York wall time. The builder adds seven hours so
 09:30 is stored as 16:30 throughout the year, matching the project strategy
 clock. Its 07:30 source start provides two full hours before the opening range.
-Gzip CSV input is accepted directly by the loader and ORB Lab.
+Gzip CSV input is accepted directly by the retained Python research loader.
 
 The separate raw extractor writes consolidated trades and complete NBBO quote
 updates by day. These are event-level SIP records, not full depth-of-book data,

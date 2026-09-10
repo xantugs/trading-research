@@ -509,7 +509,7 @@ class TickStore:
 
 
 def tick_quality(ticks: pd.DataFrame) -> dict[str, int | float | str]:
-    """Small, deterministic audit used by the Streamlit tick overlay."""
+    """Small, deterministic audit for inspecting a raw tick file."""
     price_columns = [column for column in ("bid", "ask", "price") if column in ticks]
     numeric = ticks[price_columns].apply(pd.to_numeric, errors="coerce")
     matrix = numeric.to_numpy(dtype=float, na_value=np.nan)

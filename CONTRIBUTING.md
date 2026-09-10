@@ -1,6 +1,6 @@
 # Contributing
 
-Use Python 3.11–3.13 and an isolated environment. Install `-e ".[app,dev]"`
+Use Python 3.11–3.13 and an isolated environment. Install `-e ".[dev,wrds]"`
 and run `python run_all.py --check --no-app`.
 
 Keep strategy changes separate from data/packaging changes. Describe the exact

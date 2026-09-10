@@ -4,7 +4,7 @@
 
 Local environment: Windows, Python 3.13.5, NumPy 2.3.5 and pandas 2.3.3.
 
-- Full suite: **198 pytest tests passed** in 48.81 seconds.
+- Full app-free suite: **187 pytest tests passed** in 20.90 seconds.
 - Ruff: all checks passed.
 - Package: source distribution and `py3-none-any` wheel built successfully.
 - MetaEditor: EA v1.50 and `Import_WRDS_Ticks` each compiled with **zero errors

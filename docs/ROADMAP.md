@@ -35,5 +35,5 @@
 - Add multi-candle opening ranges and partial targets after the base setup has an
   untouched out-of-sample result.
 
-The Python engine, Streamlit workspace, M1 data and Dukascopy code are retained
-for reference. They are outside the active production path.
+The Python engine, M1 data and Dukascopy code are retained for reference. The
+Streamlit workspace has been removed. These tools are outside the active path.

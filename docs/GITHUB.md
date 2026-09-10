@@ -27,7 +27,7 @@ builds a deterministic synthetic report. Market data remains a local runtime
 artifact and is never needed by GitHub Actions.
 
 Before a push, `git status` should show only intentional source changes.
-`data/`, `outputs/`, `.cache/`, `.venv/`, `.streamlit/secrets.toml`,
+`data/`, `outputs/`, `.cache/`, `.venv/`,
 .env files and compiled EX5 files are ignored. Source archives are generated
 from an explicit release file list and exclude these local artifacts.
 
