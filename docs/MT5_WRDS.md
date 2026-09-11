@@ -36,13 +36,19 @@ manifest records the number of such transitions.
 From the repository root:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\setup_mt5_wrds.ps1 `
-  -From 2018-01-02 -To 2018-01-03
+python run_all.py mt5 --from 2018-01-02 --to 2018-01-03
 ```
 
 The wrapper installs only the `wrds` Python extra, compiles the EA and importer,
 installs both binaries, converts the interval into MT5 `Common\Files`, and runs
-the verifier. It refuses to replace existing files unless `-Overwrite` is given.
+the verifier. It refuses to replace existing files unless `--overwrite` is given.
+
+Verify an existing archive, including every manifest hash, without needing the
+raw WRDS tree:
+
+```powershell
+python run_all.py mt5 --verify-only
+```
 
 Use monthly ranges for the archive. A real 104-day sample shrank **669.9 MiB of
 tab-delimited CSV to 178.6 MiB of binary**. The completed 2018–2022 archive is

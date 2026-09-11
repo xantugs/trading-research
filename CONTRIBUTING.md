@@ -1,7 +1,8 @@
 # Contributing
 
 Use Python 3.11–3.13 and an isolated environment. Install `-e ".[dev,wrds]"`
-and run `python run_all.py --check --no-app`.
+and run `.venv\Scripts\python -m ruff check .` plus
+`.venv\Scripts\python -m pytest -q`.
 
 Keep strategy changes separate from data/packaging changes. Describe the exact
 before/after rule, add a small independent price scenario for behavioral fixes,

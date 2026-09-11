@@ -1,23 +1,27 @@
 #!/usr/bin/env python3
-"""Legacy Python research runner for data, backtests, reports, and checks.
+"""Project launcher for the active MT5 workflow and legacy Python research.
 
 python run_all.py
-    Run the fast WRDS M1 mode over 2018-2022 and write a report.
-python run_all.py --mode both
+    Show the active workflow commands.
+python run_all.py mt5 --from 2018-01-02 --to 2018-01-03
+    Install dependencies, compile and install MQL5, convert WRDS ticks, and verify them.
+python run_all.py mt5 --verify-only
+    Verify every prepared compact tick file in MT5 Common Files.
+python run_all.py research --mode both
     Run both modes into one directory and print an m1-vs-tick comparison.
-python run_all.py --mode m1
+python run_all.py research --mode m1
     Run only the WRDS M1 leg from C:\\data\\wrds_m1 over 2018-2022.
-python run_all.py --mode m1 --from 2018-01-01 --to 2019-01-01 --no-app
+python run_all.py research --mode m1 --from 2018-01-01 --to 2019-01-01
     Run an end-exclusive WRDS M1 period using only the M1 root.
-python run_all.py --mode m1 --full-history --no-app
+python run_all.py research --mode m1 --full-history
     Use every year present in the M1 root (2012-2024) instead of the default window.
-python run_all.py --mode tick --no-app
+python run_all.py research --mode tick
     Use only raw WRDS files under C:\\data\\wrds_ticks, deriving signal bars therefrom.
-python run_all.py --mode tick --from 2020-01-01 --to 2021-01-01 --no-app
+python run_all.py research --mode tick --from 2020-01-01 --to 2021-01-01
     Run a bounded, end-exclusive raw-tick period.
-python run_all.py --source dukascopy --data-only
+python run_all.py research --source dukascopy --data-only
     Download 2022-01-01 through the current UTC date unless dates are supplied.
-python run_all.py --source csv --bars data/LOCAL_M1.csv --no-app
+python run_all.py research --source csv --bars data/LOCAL_M1.csv
 """
 from __future__ import annotations
 
@@ -48,6 +52,93 @@ DEFAULT_WRDS_M1_END = os.environ.get("ORB_WRDS_M1_END", "2023-01-01")
 # and after-hours events are kept rather than discarded at build time.
 DEFAULT_SESSION_START = os.environ.get("ORB_SESSION_START", "04:00:00")
 DEFAULT_SESSION_END = os.environ.get("ORB_SESSION_END", "20:00:00")
+
+
+def default_mt5_output() -> Path:
+    """Return the shared MT5 Files directory without requiring MT5 at import time."""
+    appdata = os.environ.get("APPDATA")
+    base = Path(appdata) if appdata else Path.home() / "AppData" / "Roaming"
+    return base / "MetaQuotes" / "Terminal" / "Common" / "Files"
+
+
+def parse_mt5_args(argv=None):
+    """Parse the small, active WRDS-to-MT5 command surface."""
+    ap = argparse.ArgumentParser(
+        prog="python run_all.py mt5",
+        description="Prepare WRDS QQQ ticks for MT5, or verify an existing compact archive.",
+    )
+    ap.add_argument("--from", dest="start", help="Start date, inclusive (YYYY-MM-DD)")
+    ap.add_argument("--to", dest="end", help="End date, exclusive (YYYY-MM-DD)")
+    ap.add_argument("--input-root", type=Path, default=DEFAULT_WRDS_TICK_ROOT,
+                    help=f"Raw WRDS Parquet tree (default: {DEFAULT_WRDS_TICK_ROOT})")
+    ap.add_argument("--output-dir", type=Path, default=default_mt5_output(),
+                    help="Prepared tick directory (default: MT5 Common\\Files)")
+    ap.add_argument("--mql5-root", type=Path,
+                    help="MT5 MQL5 data folder; auto-detected when omitted")
+    ap.add_argument("--overwrite", action="store_true",
+                    help="Replace prepared days that already exist")
+    ap.add_argument("--skip-dependencies", action="store_true",
+                    help="Use the existing .venv without installing the wrds extra")
+    ap.add_argument("--skip-compile", action="store_true",
+                    help="Do not compile or install the EA and importer")
+    ap.add_argument("--verify-only", action="store_true",
+                    help="Verify existing QQQ compact files; do not read raw WRDS data")
+    args = ap.parse_args(argv)
+    for flag, value in (("--from", args.start), ("--to", args.end)):
+        if value:
+            try:
+                date.fromisoformat(value)
+            except ValueError:
+                ap.error(f"{flag} must be an ISO date (YYYY-MM-DD)")
+    if args.verify_only:
+        if args.start or args.end:
+            ap.error("--from and --to are not used with --verify-only")
+    elif not args.start or not args.end:
+        ap.error("conversion requires both --from and --to")
+    if args.start and args.end and args.end <= args.start:
+        ap.error("--to must be later than --from")
+    return args
+
+
+def run_mt5(args) -> int:
+    """Run the maintained MT5 preparation wrapper or the independent verifier."""
+    if args.verify_only:
+        python = ROOT / ".venv" / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+        if not python.exists():
+            python = Path(sys.executable)
+        command([
+            python, ROOT / "scripts" / "verify_mt5_ticks.py", args.output_dir,
+            "--pattern", "QQQ_*_ticks.bin",
+        ])
+        return 0
+    if os.name != "nt":
+        raise ValueError("MT5 preparation requires Windows with MetaTrader 5 installed")
+    argv = [
+        "powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
+        ROOT / "scripts" / "setup_mt5_wrds.ps1",
+        "-From", args.start, "-To", args.end,
+        "-InputRoot", args.input_root, "-OutputDir", args.output_dir,
+    ]
+    if args.mql5_root:
+        argv.extend(["-Mql5Root", args.mql5_root])
+    if args.overwrite:
+        argv.append("-Overwrite")
+    if args.skip_dependencies:
+        argv.append("-SkipDependencies")
+    if args.skip_compile:
+        argv.append("-SkipCompile")
+    command(argv)
+    return 0
+
+
+def print_launcher_help() -> None:
+    print(
+        "ORB Backtest active workflow (MetaTrader 5)\n\n"
+        "  Prepare:  python run_all.py mt5 --from YYYY-MM-DD --to YYYY-MM-DD\n"
+        "  Verify:   python run_all.py mt5 --verify-only\n"
+        "  Research: python run_all.py research --help\n\n"
+        "Use `python run_all.py mt5 --help` for paths and optional controls."
+    )
 
 
 class Progress:
@@ -108,7 +199,7 @@ def bootstrap(args) -> int | None:
     expected = hashlib.sha256((ROOT / "pyproject.toml").read_bytes()).hexdigest()
     marker = env_dir / ".orb-dependencies"
     if args.reinstall or not marker.exists() or marker.read_text() != expected:
-        command([python, "-m", "pip", "install", "-e", ".[app,dev]"])
+        command([python, "-m", "pip", "install", "-e", ".[dev]"])
         marker.write_text(expected)
     return subprocess.call([str(python), str(ROOT / "run_all.py"), *sys.argv[1:], "--no-install"], cwd=ROOT)
 
@@ -613,7 +704,6 @@ def parse_args(argv=None):
     ap.add_argument("--output", type=Path, help="New result directory; existing directories are refused")
     ap.add_argument("--check", action="store_true", help="Run lint and tests before the pipeline")
     ap.add_argument("--compile-mt5", action="store_true", help="Compile EA with installed MetaEditor (Windows)")
-    ap.add_argument("--no-app", action="store_true", help=argparse.SUPPRESS)
     ap.add_argument("--no-install", action="store_true", help="Use current Python; no package changes")
     ap.add_argument("--reinstall", action="store_true")
     ap.add_argument("--ea-log", type=Path, help="Reconcile local CSV against an EA log; requires --source csv")
@@ -776,6 +866,20 @@ def main() -> int:
     if not (3, 11) <= sys.version_info[:2] < (3, 14):
         print("Python 3.11, 3.12 or 3.13 is required.", file=sys.stderr)
         return 1
+    if len(sys.argv) == 1:
+        print_launcher_help()
+        return 0
+    if sys.argv[1] == "mt5":
+        try:
+            return run_mt5(parse_mt5_args(sys.argv[2:]))
+        except KeyboardInterrupt:
+            print("\nStopped.")
+            return 130
+        except (OSError, ValueError, ImportError, subprocess.CalledProcessError) as exc:
+            print(f"ORB failed: {exc}", file=sys.stderr)
+            return 1
+    if sys.argv[1] == "research":
+        sys.argv = [sys.argv[0], *sys.argv[2:]]
     args = parse_args()
     try:
         status = bootstrap(args)

@@ -172,7 +172,7 @@ def test_wrds_m1_pipeline_filters_dates_and_reports_unmanifested_input(tmp_path,
     config = Path(run_all.__file__).parent / "configs" / "qqq.json"
     args = parse_args([
         "--mode", "m1", "--bars", str(bars), "--from", start, "--to", end,
-        "--config", str(config), "--output", str(output), "--no-app", "--no-install",
+        "--config", str(config), "--output", str(output), "--no-install",
     ])
     fake_repo = tmp_path / "repo"
     monkeypatch.setattr(run_all, "ROOT", fake_repo)

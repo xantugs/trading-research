@@ -13,8 +13,8 @@ The modes are independent. M1 mode never reads the tick tree. Tick mode derives
 its own M1 and signal candles and never reads or falls back to the M1 tree.
 
 ```powershell
-python run_all.py --mode m1 --no-app
-python run_all.py --mode tick --from 2018-01-01 --to 2023-01-01 --no-app
+python run_all.py research --mode m1
+python run_all.py research --mode tick --from 2018-01-01 --to 2023-01-01
 ```
 
 The former local USTEC CFD stopgap has been removed. Synthetic and Dukascopy

@@ -17,7 +17,9 @@ pushes, logs into a broker, starts a trading test, or uploads market data.
 Run the local release gate before the first push:
 
 ```sh
-python run_all.py --reinstall --check --compile-mt5 --no-app
+.venv\Scripts\python -m ruff check .
+.venv\Scripts\python -m pytest -q
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\compile_mt5.ps1
 python -m build
 ```
 

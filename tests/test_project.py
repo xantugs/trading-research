@@ -103,7 +103,7 @@ def test_launcher_from_another_working_directory(tmp_path):
     # Keep the running app's demo dataset untouched during the CLI smoke test.
     bars = tmp_path / "SYNTHETIC_TEST_M1.csv"
     make_synthetic_m1(days=3, seed=42).to_csv(bars)
-    result = subprocess.run([sys.executable, str(ROOT / "run_all.py"), "--no-install", "--no-app",
+    result = subprocess.run([sys.executable, str(ROOT / "run_all.py"), "--no-install",
                              "--source", "csv", "--bars", str(bars), "--output", str(tmp_path / "bundle")],
                             cwd=tmp_path, env=env, text=True, capture_output=True, timeout=60)
     assert result.returncode == 0, result.stdout + result.stderr
@@ -186,7 +186,7 @@ def test_recorded_spread_mode_rejects_an_all_zero_input(tmp_path):
     bars = tmp_path / "ZERO_SPREAD_M1.csv"
     make_synthetic_m1(days=3, seed=42).assign(spread=0).to_csv(bars)
     result = subprocess.run(
-        [sys.executable, str(ROOT / "run_all.py"), "--no-install", "--no-app",
+        [sys.executable, str(ROOT / "run_all.py"), "--no-install",
          "--source", "csv", "--bars", str(bars), "--config", str(ROOT / "configs/qqq.json")],
         cwd=tmp_path, text=True, capture_output=True, timeout=60,
     )
@@ -202,7 +202,7 @@ def test_wrds_manifest_symbol_mismatch_is_rejected(tmp_path):
         "strategy_clock": "New York wall time + 7 hours", "point": 0.01,
     }))
     result = subprocess.run(
-        [sys.executable, str(ROOT / "run_all.py"), "--no-install", "--no-app", "--data-only",
+        [sys.executable, str(ROOT / "run_all.py"), "--no-install", "--data-only",
          "--source", "wrds", "--bars", str(bars)],
         cwd=tmp_path, text=True, capture_output=True, timeout=60,
     )

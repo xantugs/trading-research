@@ -60,7 +60,7 @@ cached and decompressed again on reuse to detect corruption. An invalid cached
 artifact should be removed from the local cache and fetched again.
 `--to` is exclusive and must be no later than today UTC.
 
-`python run_all.py --source dukascopy` defaults to USATECHIDXUSD from
+`python run_all.py research --source dukascopy` defaults to USATECHIDXUSD from
 2022-01-01 through the latest completed UTC day. `--data-only` installs project
 dependencies and prepares/validates the files without running a report or app.
 On an identical repeat, M1, M15 and MT5 import hashes are checked against the
@@ -123,8 +123,8 @@ clock shift is applied before strategy evaluation.
 The runner has two deliberately non-overlapping WRDS modes:
 
 ```powershell
-python run_all.py --mode m1 --no-app
-python run_all.py --mode tick --from 2018-01-01 --to 2023-01-01 --no-app
+python run_all.py research --mode m1
+python run_all.py research --mode tick --from 2018-01-01 --to 2023-01-01
 ```
 
 M1 mode reads only `C:\data\wrds_m1` by default. Tick mode reads only

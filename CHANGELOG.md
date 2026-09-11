@@ -16,6 +16,8 @@
   both MQL5 programs compile with zero errors and zero warnings.
 - Converted and independently hash-verified all 1,259 days: 632,204,742 ticks in
   7.065 GiB instead of the 22.85 GiB CSV projection, with zero verifier problems.
+- Made `run_all.py mt5` the top-level preparation and verification entry point;
+  the old Python backtester now has the explicit `research` command.
 
 ## 1.7.0 — 2026-09-10
 

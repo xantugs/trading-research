@@ -19,24 +19,22 @@ at `C:\data\wrds_ticks`.
 Open PowerShell in this folder and prepare one day first:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\setup_mt5_wrds.ps1 `
-  -From 2018-01-02 -To 2018-01-03
+python run_all.py mt5 --from 2018-01-02 --to 2018-01-03
 ```
 
 The command creates `.venv` if needed, installs the Parquet dependency,
 compiles both MQL5 programs, installs the binaries in the detected MT5 data
 folder, converts every available source record in the requested New York date
 window, writes the daily files to MT5 `Common\Files`, and verifies their schema,
-ordering, size and SHA-256 hashes. `-To` is exclusive.
+ordering, size and SHA-256 hashes. `--to` is exclusive.
 
 For a month, use an end-exclusive range:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\setup_mt5_wrds.ps1 `
-  -From 2018-01-01 -To 2018-02-01
+python run_all.py mt5 --from 2018-01-01 --to 2018-02-01
 ```
 
-Existing output is protected. Add `-Overwrite` only when intentionally rebuilding
+Existing output is protected. Add `--overwrite` only when intentionally rebuilding
 the same days. Long ranges are accepted by the setup command, but monthly batches
 are easier to inspect and delete after import.
 
@@ -115,6 +113,15 @@ The converter limits direct commands to 31 calendar days unless
 `--allow-large-range` is supplied. It shows a progress bar and refuses to
 overwrite existing output unless `--overwrite` is supplied.
 
+To recheck an already prepared archive without the raw Parquet tree:
+
+```powershell
+python run_all.py mt5 --verify-only
+```
+
+The PowerShell wrapper remains available as a direct lower-level command. Run
+`python run_all.py mt5 --help` for custom input, output and MQL5 paths.
+
 ## Strategy state
 
 The EA supports observed or forecast opening ranges, multi-candle same-colour
@@ -135,6 +142,7 @@ not supply or alter the imported custom-symbol ticks.
 mt5/ORB_Backtest.mq5          strategy EA
 mt5/Import_WRDS_Ticks.mq5     custom-symbol tick importer
 scripts/setup_mt5_wrds.ps1    setup, compile, install, convert and verify
+run_all.py                     active MT5 launcher; explicit legacy research mode
 scripts/wrds_to_mt5_ticks.py  WRDS Parquet to MT5 tick conversion
 scripts/mt5_csv_to_bin.py     verified legacy CSV to compact binary migration
 scripts/verify_mt5_ticks.py   streaming output and manifest verification
