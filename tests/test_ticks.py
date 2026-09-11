@@ -117,6 +117,22 @@ def test_tick_store_orders_filters_offsets_and_projects_columns(tmp_path, monkey
         quotes.bid[0] = 0
 
 
+def test_tick_store_preserves_file_order_for_exact_timestamp_conflicts_without_sequence(tmp_path):
+    path = write_quotes(tmp_path, "2018-03-01", {
+        "date": ["2018-03-01"] * 3,
+        "time_m": ["09:30:00.123456"] * 3,
+        "time_m_nano": [100, 100, 100],
+        "best_bid": [100.00, 100.00, 100.01],
+        "best_ask": [100.01, 100.01, 100.02],
+    })
+    quotes = TickStore(tmp_path, strategy_offset_hours=0, max_cache_days=0).load_day("2018-03-01")
+
+    assert quotes.coverage.source_path == path
+    assert quotes.coverage.exact_timestamp_conflicts == 1
+    assert quotes.bid.tolist() == [100.00, 100.01]
+    assert quotes.ask.tolist() == [100.01, 100.02]
+
+
 def test_tick_store_cache_is_bounded_and_lru(tmp_path):
     for day in ("2018-03-01", "2018-03-02", "2018-03-05"):
         write_quotes(tmp_path, day)

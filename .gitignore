@@ -19,6 +19,7 @@ outputs/
 data/*
 !data/README.md
 *.ex5
+*_ticks.bin
 *.log
 reconcile_report.csv
 .DS_Store

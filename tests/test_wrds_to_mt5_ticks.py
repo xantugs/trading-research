@@ -1,4 +1,5 @@
 import json
+import struct
 from datetime import date
 
 import pandas as pd
@@ -6,13 +7,18 @@ import pytest
 
 from orb.ticks import TickStore
 from scripts.verify_mt5_ticks import main as verify_main
+from scripts.mt5_csv_to_bin import main as migrate_main
 from scripts.wrds_to_mt5_ticks import (
     MT5_COLUMNS,
+    BINARY_HEADER,
+    BINARY_RECORD_DTYPE,
     convert_day,
     discover_quote_days,
+    main as convert_main,
     parse_args,
     price_change_mask,
     verify_mt5_csv,
+    verify_mt5_bin,
 )
 
 
@@ -69,6 +75,66 @@ def test_real_shape_converts_full_new_york_day_to_mt5_ticks(tmp_path):
     assert verify_main([str(target)]) == 0
 
 
+def test_compact_binary_round_trip_preserves_full_day_and_equal_millisecond_order(tmp_path):
+    root = tmp_path / "wrds_ticks"
+    raw_day(root)
+    output = tmp_path / "mt5"
+    manifest = convert_day(
+        TickStore(root, strategy_offset_hours=0, symbol="QQQ", max_cache_days=0),
+        date(2020, 1, 2), output, digits=2, chunk_rows=2,
+        keep_unchanged=False, overwrite=False, output_format="bin",
+    )
+    target = output / "QQQ_2020-01-02_ticks.bin"
+    stats = verify_mt5_bin(target, expected_rows=3)
+
+    assert target.stat().st_size == BINARY_HEADER.size + 3 * BINARY_RECORD_DTYPE.itemsize
+    assert BINARY_HEADER.size == 32 and BINARY_RECORD_DTYPE.itemsize == 12
+    assert stats["source_day"] == "2020-01-02"
+    assert stats["first"] == "2020-01-02 00:00:00"
+    assert stats["last"] == "2020-01-02 23:59:59.999000"
+    assert stats["adjacent_same_millisecond_rows"] == 1
+    assert manifest["output_format"] == "bin"
+    assert verify_main([str(target)]) == 0
+
+    with target.open("rb") as handle:
+        handle.seek(BINARY_HEADER.size)
+        first = struct.unpack("<iii", handle.read(12))
+        second = struct.unpack("<iii", handle.read(12))
+    assert first == (0, 10000, 10001)
+    assert second == (0, 10001, 10002)
+
+
+def test_binary_verifier_rejects_truncation(tmp_path):
+    root = tmp_path / "wrds_ticks"
+    raw_day(root)
+    output = tmp_path / "mt5"
+    convert_day(
+        TickStore(root, strategy_offset_hours=0, symbol="QQQ", max_cache_days=0),
+        date(2020, 1, 2), output, digits=2, chunk_rows=10,
+        keep_unchanged=False, overwrite=False, output_format="bin",
+    )
+    target = output / "QQQ_2020-01-02_ticks.bin"
+    target.write_bytes(target.read_bytes()[:-1])
+    with pytest.raises(ValueError, match="binary size"):
+        verify_mt5_bin(target)
+
+
+def test_verified_csv_migrates_to_binary_and_is_removed(tmp_path):
+    root = tmp_path / "wrds_ticks"
+    raw_day(root)
+    output = tmp_path / "mt5"
+    convert_day(
+        TickStore(root, strategy_offset_hours=0, symbol="QQQ", max_cache_days=0),
+        date(2020, 1, 2), output, digits=2, chunk_rows=10,
+        keep_unchanged=False, overwrite=False,
+    )
+    csv_path = output / "QQQ_2020-01-02_ticks.csv"
+    assert migrate_main([str(output), "--delete-csv"]) == 0
+    assert not csv_path.exists()
+    binary_path = output / "QQQ_2020-01-02_ticks.bin"
+    assert verify_main([str(binary_path)]) == 0
+
+
 def test_discovery_is_date_bounded_and_duplicate_safe(tmp_path):
     root = tmp_path / "ticks"
     first = raw_day(root, "2020-01-02")
@@ -86,6 +152,9 @@ def test_converter_refuses_implicit_multi_month_disk_run():
         "--from", "2018-01-01", "--to", "2023-01-01", "--allow-large-range",
     ])
     assert allowed.end == date(2023, 1, 1)
+    assert parse_args(["--from", "2020-01-01", "--to", "2020-01-02", "--workers", "2"]).workers == 2
+    with pytest.raises(SystemExit):
+        parse_args(["--from", "2020-01-01", "--to", "2020-01-02", "--workers", "5"])
 
 
 def test_verifier_detects_tampered_manifest(tmp_path):
@@ -102,3 +171,32 @@ def test_verifier_detects_tampered_manifest(tmp_path):
     manifest["rows"] += 1
     manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
     assert verify_main([str(output)]) == 1
+
+
+def test_verifier_directory_pattern_limits_the_batch(tmp_path):
+    root = tmp_path / "ticks"
+    raw_day(root, "2020-01-02")
+    raw_day(root, "2021-01-04")
+    output = tmp_path / "mt5"
+    store = TickStore(root, strategy_offset_hours=0, symbol="QQQ", max_cache_days=0)
+    for day in (date(2020, 1, 2), date(2021, 1, 4)):
+        convert_day(
+            store, day, output, digits=2, chunk_rows=10,
+            keep_unchanged=False, overwrite=False,
+        )
+    assert verify_main([str(output), "--pattern", "QQQ_2020-*_ticks.csv"]) == 0
+
+
+def test_converter_two_worker_mode_writes_each_day(tmp_path):
+    root = tmp_path / "ticks"
+    raw_day(root, "2020-01-02")
+    raw_day(root, "2020-01-03")
+    output = tmp_path / "mt5"
+    assert convert_main([
+        str(root), "--from", "2020-01-02", "--to", "2020-01-04",
+        "--output-dir", str(output), "--workers", "2", "--format", "bin",
+    ]) == 0
+    assert sorted(path.name for path in output.glob("*_ticks.bin")) == [
+        "QQQ_2020-01-02_ticks.bin", "QQQ_2020-01-03_ticks.bin",
+    ]
+    assert verify_main([str(output)]) == 0

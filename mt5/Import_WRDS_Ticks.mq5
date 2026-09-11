@@ -1,11 +1,11 @@
 //+------------------------------------------------------------------+
 //|                                            Import_WRDS_Ticks.mq5 |
-//| Import one verified WRDS-to-MT5 daily tick CSV into a custom QQQ |
+//| Import verified WRDS-to-MT5 daily tick files into a custom QQQ   |
 //+------------------------------------------------------------------+
 #property script_show_inputs
-#property version "1.00"
+#property version "1.10"
 
-input string InpFileName       = "QQQ_2018-01-02_ticks.csv"; // Exact name or wildcard, e.g. QQQ_*_ticks.csv
+input string InpFileName       = "QQQ_*_ticks.bin"; // Exact name or wildcard; compact .bin preferred
 input string InpCustomSymbol   = "QQQ.WRDS";
 input string InpOriginSymbol   = "";          // Optional broker stock symbol to copy properties from
 input bool   InpUseCommonFiles = true;        // Read from Terminal Common\Files
@@ -70,7 +70,7 @@ bool PrepareSymbol()
    return(true);
   }
 
-bool LoadTicks(const string fileName, MqlTick &ticks[], datetime &sourceDay)
+bool LoadCsvTicks(const string fileName, MqlTick &ticks[], datetime &sourceDay)
   {
    const int flags = FILE_READ | FILE_CSV | FILE_ANSI | (InpUseCommonFiles ? FILE_COMMON : 0);
    const int handle = FileOpen(fileName, flags, '\t', CP_UTF8);
@@ -149,6 +149,100 @@ bool LoadTicks(const string fileName, MqlTick &ticks[], datetime &sourceDay)
       return(false);
      }
    return(true);
+  }
+
+bool LoadBinaryTicks(const string fileName, MqlTick &ticks[], datetime &sourceDay)
+  {
+   const long expectedMagic = 3552006713337074255; // little-endian "ORBTICK1"
+   const int headerBytes = 32;
+   const int recordBytes = 12;
+   const int flags = FILE_READ | FILE_BIN | (InpUseCommonFiles ? FILE_COMMON : 0);
+   const int handle = FileOpen(fileName, flags);
+   if(handle == INVALID_HANDLE)
+     {
+      PrintFormat("Cannot open %s. Error %d", fileName, GetLastError());
+      return(false);
+     }
+   const long actualSize = (long)FileSize(handle);
+   if(actualSize < headerBytes)
+     {
+      PrintFormat("Truncated binary header in %s", fileName);
+      FileClose(handle);
+      return(false);
+     }
+   const long magic = FileReadLong(handle);
+   const int version = FileReadInteger(handle, INT_VALUE);
+   const int digits = FileReadInteger(handle, INT_VALUE);
+   const long sourceSeconds = FileReadLong(handle);
+   const long declaredRows = FileReadLong(handle);
+   if(magic != expectedMagic || version != 1 || digits != InpDigits ||
+      sourceSeconds <= 0 || sourceSeconds % 86400 != 0 ||
+      declaredRows <= 0 || declaredRows > INT_MAX)
+     {
+      PrintFormat("Unsupported binary header in %s (version %d, digits %d, rows %I64d)",
+                  fileName, version, digits, declaredRows);
+      FileClose(handle);
+      return(false);
+     }
+   const long expectedSize = headerBytes + declaredRows * recordBytes;
+   if(actualSize != expectedSize)
+     {
+      PrintFormat("Wrong binary size in %s: %I64d, expected %I64d",
+                  fileName, actualSize, expectedSize);
+      FileClose(handle);
+      return(false);
+     }
+   const int count = (int)declaredRows;
+   if(ArrayResize(ticks, count) != count)
+     {
+      PrintFormat("Cannot allocate %d ticks", count);
+      FileClose(handle);
+      return(false);
+     }
+   const double scale = MathPow(10.0, digits);
+   long previousMsc = -1;
+   sourceDay = (datetime)sourceSeconds;
+   for(int index = 0; index < count; index++)
+     {
+      const int millis = FileReadInteger(handle, INT_VALUE);
+      const int bidPoints = FileReadInteger(handle, INT_VALUE);
+      const int askPoints = FileReadInteger(handle, INT_VALUE);
+      const long timeMsc = sourceSeconds * 1000 + millis;
+      const double bid = bidPoints / scale;
+      const double ask = askPoints / scale;
+      if(millis < 0 || millis >= 86400000 || bidPoints <= 0 || askPoints < bidPoints ||
+         (previousMsc >= 0 && timeMsc < previousMsc))
+        {
+         PrintFormat("Invalid or out-of-order binary tick at data row %d", index + 1);
+         FileClose(handle);
+         ArrayResize(ticks, 0);
+         return(false);
+        }
+      ticks[index].time = (datetime)(timeMsc / 1000);
+      ticks[index].time_msc = timeMsc;
+      ticks[index].bid = bid;
+      ticks[index].ask = ask;
+      ticks[index].last = 0.0;
+      ticks[index].volume = 0;
+      ticks[index].volume_real = 0.0;
+      ticks[index].flags = TICK_FLAG_BID | TICK_FLAG_ASK;
+      previousMsc = timeMsc;
+     }
+   FileClose(handle);
+   return(true);
+  }
+
+bool LoadTicks(const string fileName, MqlTick &ticks[], datetime &sourceDay)
+  {
+   const int length = StringLen(fileName);
+   string extension = length >= 4 ? StringSubstr(fileName, length - 4) : "";
+   StringToLower(extension);
+   if(extension == ".bin")
+      return(LoadBinaryTicks(fileName, ticks, sourceDay));
+   if(extension == ".csv")
+      return(LoadCsvTicks(fileName, ticks, sourceDay));
+   PrintFormat("Unsupported tick file extension: %s", fileName);
+   return(false);
   }
 
 bool ImportOneFile(const string fileName)

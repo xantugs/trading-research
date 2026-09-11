@@ -3,11 +3,11 @@
 ## What the pipeline does
 
 `scripts/wrds_to_mt5_ticks.py` reads the local daily QQQ complete-NBBO Parquet
-files and emits MT5's tab-delimited custom-tick format:
+files and emits a compact daily binary read by `Import_WRDS_Ticks.mq5`:
 
 ```text
-<DATE>  <TIME>        <BID>   <ASK>   <LAST>  <VOLUME>
-2018.01.02  04:00:00.061  152.49  156.25  0.00  0
+32-byte header: magic, format version, price digits, source-day seconds, row count
+12-byte record: milliseconds since midnight, bid price points, ask price points
 ```
 
 The date interval is New York wall time, start-inclusive and end-exclusive.
@@ -19,9 +19,17 @@ Consecutive rows whose bid and ask are unchanged are removed because only TAQ
 metadata or displayed size changed. Every bid/ask change remains. Nanosecond
 order is retained when MT5's millisecond timestamps collide.
 
-Each CSV has a sibling manifest with source counts, cleaning counts, time bounds,
+Each binary has a sibling manifest with source counts, cleaning counts, time bounds,
 same-millisecond counts, size and SHA-256. `verify_mt5_ticks.py` independently
 streams the file and checks that contract.
+
+MT5 exposes millisecond tick timestamps, so source nanoseconds are not written.
+When several price changes fall in one millisecond, all remain as separate records
+in their original WRDS order and receive the same MT5 `time_msc` value.
+The export query orders rows by `time_m`, `time_m_nano`, and a quote sequence
+column when the table provides one. If distinct states tie on the full timestamp
+and no sequence column exists, their Parquet row order is preserved and the
+manifest records the number of such transitions.
 
 ## Prepare data and binaries
 
@@ -34,28 +42,40 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\setup_mt5_wrds.ps1 `
 
 The wrapper installs only the `wrds` Python extra, compiles the EA and importer,
 installs both binaries, converts the interval into MT5 `Common\Files`, and runs
-the verifier. It refuses to replace existing CSVs unless `-Overwrite` is given.
+the verifier. It refuses to replace existing files unless `-Overwrite` is given.
 
-Use monthly ranges for the archive. The output can be much larger than the input
-on disk because CSV is uncompressed. Import a batch, confirm it in MT5, then
-delete those generated CSVs before preparing the next batch. Never delete the
-source Parquet until the imported history has passed the MT5 smoke test.
+Use monthly ranges for the archive. A real 104-day sample shrank **669.9 MiB of
+tab-delimited CSV to 178.6 MiB of binary**. The completed 2018–2022 archive is
+**1,259 daily files, 632,204,742 ticks and 7,586,497,192 bytes (7.065 GiB)**.
+The original local tree was 23.59 GiB because it also contained consolidated
+trades. The full converter therefore works one month at a time and can remove
+verified source months as it proceeds.
 
-A 20-day sample distributed across 2018–2022 projected about **22.85 GiB** of
-price-change CSV from the 17.53 GiB quote-Parquet layer. The complete local raw
-tree is 23.59 GiB because it also contains consolidated trades. Storing all CSVs,
-the raw archive and MT5's internal custom-symbol history together may exceed the
-available disk space, which is why staged monthly import and cleanup is required.
+The final whole-archive structural and SHA-256 pass reported 1,259 files and zero
+problems. Exactly one distinct-state transition in the archive tied on its full
+WRDS timestamp without a sequence field; its source row order is preserved and
+recorded in the relevant manifest.
+
+To perform that conversion and verified source cleanup automatically:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\convert_all_wrds_to_mt5.ps1 `
+  -DeleteSourceAfterVerify -Overwrite
+```
+
+The script refuses to delete a month until the converter succeeds, every daily
+file and hash manifest passes the independent verifier, and the output filenames
+exactly match the source quote dates.
 
 ## Import
 
 In MT5, refresh Navigator and run `Import_WRDS_Ticks` under Scripts. Use an exact
-daily filename first. After that, `QQQ_*_ticks.csv` imports every staged file.
+daily filename first. After that, `QQQ_*_ticks.bin` imports every staged file.
 The importer:
 
 - creates or updates `QQQ.WRDS`;
 - configures stock-style USD/whole-share properties;
-- validates each daily CSV again;
+- validates each daily binary header, size, prices and ordering again;
 - imports one day at a time to bound memory use;
 - replaces the entire corresponding custom-symbol day, preventing duplicates.
 

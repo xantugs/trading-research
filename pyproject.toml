@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "orb-backtest"
-version = "1.7.0"
+version = "1.7.1"
 description = "WRDS QQQ tick preparation and Opening Range Breakout testing for MetaTrader 5"
 readme = "README.md"
 license = "MIT"

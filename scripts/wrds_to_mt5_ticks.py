@@ -9,9 +9,11 @@ Every price change is retained, including multiple changes in one millisecond.
 from __future__ import annotations
 
 import argparse
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import hashlib
 import json
 import re
+import struct
 import sys
 import time
 from datetime import date
@@ -23,6 +25,10 @@ import pandas as pd
 from orb.ticks import TickStore
 
 MT5_COLUMNS = ["<DATE>", "<TIME>", "<BID>", "<ASK>", "<LAST>", "<VOLUME>"]
+BINARY_MAGIC = int.from_bytes(b"ORBTICK1", "little")
+BINARY_VERSION = 1
+BINARY_HEADER = struct.Struct("<Qiiqq")  # magic, version, digits, source-day seconds, rows
+BINARY_RECORD_DTYPE = np.dtype([("millis", "<i4"), ("bid", "<i4"), ("ask", "<i4")])
 QUOTE_NAME = re.compile(r"^(?P<symbol>[A-Z0-9.]+)_(?P<date>\d{4}-\d{2}-\d{2})_quotes\.parquet$")
 
 
@@ -109,6 +115,128 @@ def write_mt5_csv(path: Path, times: np.ndarray, bid: np.ndarray, ask: np.ndarra
     }
 
 
+def write_mt5_bin(path: Path, times: np.ndarray, bid: np.ndarray, ask: np.ndarray,
+                  digits: int, source_day: date) -> dict:
+    """Write compact records consumed directly by Import_WRDS_Ticks.mq5."""
+    _validate_price_grid(bid, digits, "Bid")
+    _validate_price_grid(ask, digits, "Ask")
+    milliseconds = times.astype("datetime64[ms]")
+    if len(milliseconds) > 1 and np.any(milliseconds[1:] < milliseconds[:-1]):
+        raise ValueError("Millisecond timestamps are not nondecreasing")
+    scale = 10 ** digits
+    bid_points = np.rint(bid * scale)
+    ask_points = np.rint(ask * scale)
+    info = np.iinfo(np.int32)
+    if ((bid_points < info.min).any() or (bid_points > info.max).any()
+            or (ask_points < info.min).any() or (ask_points > info.max).any()):
+        raise ValueError("Scaled prices exceed the compact binary int32 range")
+    source_midnight = np.datetime64(source_day.isoformat(), "ms")
+    millis_of_day = (milliseconds - source_midnight).astype("timedelta64[ms]").astype(np.int64)
+    if len(millis_of_day) and ((millis_of_day < 0).any() or (millis_of_day >= 86_400_000).any()):
+        raise ValueError(f"Ticks are outside source day {source_day}")
+    records = np.empty(len(milliseconds), dtype=BINARY_RECORD_DTYPE)
+    records["millis"] = millis_of_day.astype(np.int32)
+    records["bid"] = bid_points.astype(np.int32)
+    records["ask"] = ask_points.astype(np.int32)
+    staging = path.with_name(f".{path.name}.partial")
+    staging.unlink(missing_ok=True)
+    try:
+        with staging.open("wb") as handle:
+            source_day_seconds = int(source_midnight.astype("datetime64[s]").astype(np.int64))
+            handle.write(BINARY_HEADER.pack(
+                BINARY_MAGIC, BINARY_VERSION, digits, source_day_seconds, len(records),
+            ))
+            records.tofile(handle)
+        staging.replace(path)
+    finally:
+        staging.unlink(missing_ok=True)
+    adjacent_same_ms = int(np.sum(milliseconds[1:] == milliseconds[:-1])) if len(milliseconds) > 1 else 0
+    return {
+        "rows": len(milliseconds),
+        "first": str(pd.Timestamp(milliseconds[0])) if len(milliseconds) else None,
+        "last": str(pd.Timestamp(milliseconds[-1])) if len(milliseconds) else None,
+        "adjacent_same_millisecond_rows": adjacent_same_ms,
+    }
+
+
+def verify_mt5_bin(path: Path, *, expected_rows: int | None = None,
+                   price_changes_only: bool = True, chunk_rows: int = 250_000) -> dict:
+    """Stream-verify the compact importer format without expanding it to CSV."""
+    rows = 0
+    first = None
+    last = None
+    same_ms = 0
+    previous_time = None
+    previous_bid = None
+    previous_ask = None
+    with path.open("rb") as handle:
+        header = handle.read(BINARY_HEADER.size)
+        if len(header) != BINARY_HEADER.size:
+            raise ValueError(f"{path}: truncated binary header")
+        magic, version, digits, source_day_seconds, declared_rows = BINARY_HEADER.unpack(header)
+        if magic != BINARY_MAGIC or version != BINARY_VERSION:
+            raise ValueError(f"{path}: unsupported binary magic/version")
+        if (not 0 <= digits <= 8 or source_day_seconds <= 0
+                or source_day_seconds % 86_400 != 0 or declared_rows <= 0):
+            raise ValueError(f"{path}: invalid binary header values")
+        expected_size = BINARY_HEADER.size + declared_rows * BINARY_RECORD_DTYPE.itemsize
+        if path.stat().st_size != expected_size:
+            raise ValueError(
+                f"{path}: binary size {path.stat().st_size:,}, expected {expected_size:,}"
+            )
+        scale = 10 ** digits
+        while rows < declared_rows:
+            count = min(chunk_rows, declared_rows - rows)
+            records = np.fromfile(handle, dtype=BINARY_RECORD_DTYPE, count=count)
+            if len(records) != count:
+                raise ValueError(f"{path}: truncated binary records")
+            millis = records["millis"]
+            bid_points = records["bid"]
+            ask_points = records["ask"]
+            if (millis < 0).any() or (millis >= 86_400_000).any():
+                raise ValueError(f"{path}: millisecond offset is outside the source day")
+            stamp = source_day_seconds * 1000 + millis.astype(np.int64)
+            if (bid_points <= 0).any() or (ask_points < bid_points).any():
+                raise ValueError(f"{path}: invalid, nonpositive, or crossed bid/ask")
+            if len(stamp) > 1 and np.any(stamp[1:] < stamp[:-1]):
+                raise ValueError(f"{path}: timestamps decrease inside a chunk")
+            if previous_time is not None:
+                if stamp[0] < previous_time:
+                    raise ValueError(f"{path}: timestamps decrease between chunks")
+                if stamp[0] == previous_time:
+                    same_ms += 1
+                if (price_changes_only and bid_points[0] == previous_bid
+                        and ask_points[0] == previous_ask):
+                    raise ValueError(f"{path}: consecutive duplicate bid/ask state")
+            if price_changes_only and len(stamp) > 1:
+                duplicate = ((bid_points[1:] == bid_points[:-1])
+                             & (ask_points[1:] == ask_points[:-1]))
+                if duplicate.any():
+                    raise ValueError(f"{path}: consecutive duplicate bid/ask state")
+            if len(stamp) > 1:
+                same_ms += int(np.sum(stamp[1:] == stamp[:-1]))
+            if first is None:
+                first = str(pd.Timestamp(int(stamp[0]), unit="ms"))
+            last = str(pd.Timestamp(int(stamp[-1]), unit="ms"))
+            previous_time = int(stamp[-1])
+            previous_bid = int(bid_points[-1])
+            previous_ask = int(ask_points[-1])
+            rows += len(records)
+        if handle.read(1):
+            raise ValueError(f"{path}: trailing binary bytes")
+    if expected_rows is not None and rows != expected_rows:
+        raise ValueError(f"{path}: found {rows:,} rows, expected {expected_rows:,}")
+    return {
+        "rows": rows,
+        "first": first,
+        "last": last,
+        "adjacent_same_millisecond_rows": same_ms,
+        "source_day": str(pd.Timestamp(source_day_seconds, unit="s").date()),
+        "price_digits": digits,
+        "price_scale": scale,
+    }
+
+
 def verify_mt5_csv(path: Path, *, expected_rows: int | None = None,
                    price_changes_only: bool = True, chunk_rows: int = 250_000) -> dict:
     """Stream-verify schema, prices, ordering, and optional de-duplication."""
@@ -167,24 +295,35 @@ def verify_mt5_csv(path: Path, *, expected_rows: int | None = None,
 
 
 def convert_day(store: TickStore, day: date, output_dir: Path, *, digits: int,
-                chunk_rows: int, keep_unchanged: bool, overwrite: bool) -> dict:
+                chunk_rows: int, keep_unchanged: bool, overwrite: bool,
+                output_format: str = "csv") -> dict:
     quotes = store.load_day(day)
     mask = (np.ones(len(quotes), dtype=bool) if keep_unchanged
             else price_change_mask(quotes.bid, quotes.ask))
     times = quotes.time[mask]
     bid = quotes.bid[mask]
     ask = quotes.ask[mask]
-    target = output_dir / f"{store.symbol}_{day.isoformat()}_ticks.csv"
+    suffix = ".bin" if output_format == "bin" else ".csv"
+    target = output_dir / f"{store.symbol}_{day.isoformat()}_ticks{suffix}"
     manifest_path = target.with_suffix(".manifest.json")
     if (target.exists() or manifest_path.exists()) and not overwrite:
         raise FileExistsError(f"Refusing to overwrite {target}; pass --overwrite")
     output_dir.mkdir(parents=True, exist_ok=True)
-    written = write_mt5_csv(target, times, bid, ask, digits, chunk_rows)
-    verified = verify_mt5_csv(
-        target, expected_rows=written["rows"],
-        price_changes_only=not keep_unchanged, chunk_rows=chunk_rows,
-    )
-    if written != verified:
+    if output_format == "bin":
+        written = write_mt5_bin(target, times, bid, ask, digits, day)
+        verified = verify_mt5_bin(
+            target, expected_rows=written["rows"],
+            price_changes_only=not keep_unchanged, chunk_rows=chunk_rows,
+        )
+        comparable = {key: verified[key] for key in written}
+    else:
+        written = write_mt5_csv(target, times, bid, ask, digits, chunk_rows)
+        verified = verify_mt5_csv(
+            target, expected_rows=written["rows"],
+            price_changes_only=not keep_unchanged, chunk_rows=chunk_rows,
+        )
+        comparable = verified
+    if written != comparable:
         raise ValueError(f"{target}: write/verify statistics disagree")
     source = quotes.coverage
     manifest = {
@@ -202,6 +341,12 @@ def convert_day(store: TickStore, day: date, output_dir: Path, *, digits: int,
             "invalid/crossed quotes removed; consecutive unchanged bid/ask states removed"
         ),
         "mt5_columns": MT5_COLUMNS,
+        "output_format": output_format,
+        "binary_record_layout": (
+            "32-byte header; then 12-byte little-endian records: "
+            "int32 milliseconds_since_midnight, int32 bid_points, int32 ask_points"
+        )
+        if output_format == "bin" else None,
         "price_digits": digits,
         "source_file": str(source.source_path.resolve()),
         "source_size_bytes": source.source_path.stat().st_size,
@@ -210,6 +355,7 @@ def convert_day(store: TickStore, day: date, output_dir: Path, *, digits: int,
         "dropped_timestamps": source.dropped_timestamps,
         "dropped_invalid": source.dropped_invalid,
         "dropped_crossed": source.dropped_crossed,
+        "exact_timestamp_conflicts_in_source_order": source.exact_timestamp_conflicts,
         "removed_unchanged_price_states": int(source.rows - len(times)),
         "output_file": target.name,
         "output_size_bytes": target.stat().st_size,
@@ -229,7 +375,11 @@ def parse_args(argv=None):
                         help="End-exclusive New York source date")
     parser.add_argument("--output-dir", type=Path, default=Path(r"C:\data\mt5_qqq_ticks"))
     parser.add_argument("--digits", type=int, default=2)
+    parser.add_argument("--format", choices=["csv", "bin"], default="bin",
+                        help="CSV for MT5 UI import, or compact binary for the supplied MQL5 importer")
     parser.add_argument("--chunk-rows", type=int, default=250_000)
+    parser.add_argument("--workers", type=int, default=1,
+                        help="Independent daily conversions to run concurrently (1-4)")
     parser.add_argument("--keep-unchanged", action="store_true",
                         help="Keep metadata-only quote updates whose bid and ask did not change")
     parser.add_argument("--allow-large-range", action="store_true",
@@ -245,6 +395,8 @@ def parse_args(argv=None):
         parser.error("--digits must be between 0 and 8")
     if args.chunk_rows < 1:
         parser.error("--chunk-rows must be positive")
+    if not 1 <= args.workers <= 4:
+        parser.error("--workers must be between 1 and 4")
     if (args.end - args.start).days > 31 and not args.allow_large_range:
         parser.error("date range exceeds 31 days; process one month at a time or pass --allow-large-range")
     return args
@@ -265,19 +417,36 @@ def main(argv=None) -> int:
         return 1
     try:
         days = discover_quote_days(args.root, args.symbol, args.start, args.end)
-        store = TickStore(args.root, strategy_offset_hours=0, symbol=args.symbol, max_cache_days=0)
         started = time.monotonic()
         progress(0, len(days), "starting", started)
         manifests = []
-        for position, (day, _) in enumerate(days, start=1):
-            result = convert_day(
+
+        def run_one(day: date) -> dict:
+            store = TickStore(
+                args.root, strategy_offset_hours=0,
+                symbol=args.symbol, max_cache_days=0,
+            )
+            return convert_day(
                 store, day, args.output_dir, digits=args.digits,
                 chunk_rows=args.chunk_rows, keep_unchanged=args.keep_unchanged,
-                overwrite=args.overwrite,
+                overwrite=args.overwrite, output_format=args.format,
             )
-            manifests.append(result)
-            progress(position, len(days),
-                     f"{day} ({result['rows']:,} MT5 ticks)", started)
+
+        if args.workers == 1:
+            for position, (day, _) in enumerate(days, start=1):
+                result = run_one(day)
+                manifests.append(result)
+                progress(position, len(days),
+                         f"{day} ({result['rows']:,} MT5 ticks)", started)
+        else:
+            with ThreadPoolExecutor(max_workers=args.workers) as pool:
+                pending = {pool.submit(run_one, day): day for day, _ in days}
+                for position, future in enumerate(as_completed(pending), start=1):
+                    day = pending[future]
+                    result = future.result()
+                    manifests.append(result)
+                    progress(position, len(days),
+                             f"{day} ({result['rows']:,} MT5 ticks)", started)
         total_source = sum(item["source_rows"] for item in manifests)
         total_output = sum(item["rows"] for item in manifests)
         print(f"Ready: {len(manifests)} day(s), {total_output:,} MT5 ticks from "

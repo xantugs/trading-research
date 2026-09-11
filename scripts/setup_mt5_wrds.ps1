@@ -61,7 +61,8 @@ Copy-Item -LiteralPath (Join-Path $projectRoot "mt5\Import_WRDS_Ticks.ex5") -Des
 
 $convertArgs = @(
     (Join-Path $projectRoot "scripts\wrds_to_mt5_ticks.py"),
-    $InputRoot, "--from", $From, "--to", $To, "--output-dir", $OutputDir
+    $InputRoot, "--from", $From, "--to", $To, "--output-dir", $OutputDir,
+    "--format", "bin"
 )
 if (($end - $start).TotalDays -gt 31) { $convertArgs += "--allow-large-range" }
 if ($Overwrite) { $convertArgs += "--overwrite" }
@@ -70,7 +71,7 @@ if ($LASTEXITCODE -ne 0) { throw "WRDS-to-MT5 conversion failed." }
 
 $verifiedFiles = 0
 for ($day = $start; $day -lt $end; $day = $day.AddDays(1)) {
-    $file = Join-Path $OutputDir ("QQQ_{0}_ticks.csv" -f $day.ToString("yyyy-MM-dd"))
+    $file = Join-Path $OutputDir ("QQQ_{0}_ticks.bin" -f $day.ToString("yyyy-MM-dd"))
     if (-not (Test-Path -LiteralPath $file)) { continue }
     & $python (Join-Path $projectRoot "scripts\verify_mt5_ticks.py") $file
     if ($LASTEXITCODE -ne 0) { throw "MT5 tick verification failed for $file." }
@@ -83,4 +84,4 @@ Write-Output "READY"
 Write-Output "  EA:       $expertDir\ORB_Backtest.ex5"
 Write-Output "  Importer: $scriptDir\Import_WRDS_Ticks.ex5"
 Write-Output "  Ticks:    $OutputDir"
-Write-Output "In MT5, refresh Navigator, run Import_WRDS_Ticks, and set InpFileName to an exact file or QQQ_*_ticks.csv."
+Write-Output "In MT5, refresh Navigator, run Import_WRDS_Ticks, and set InpFileName to an exact file or QQQ_*_ticks.bin."

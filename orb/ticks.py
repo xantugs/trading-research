@@ -290,6 +290,7 @@ class TickCoverage:
     first: pd.Timestamp | None
     last: pd.Timestamp | None
     strategy_offset_hours: int
+    exact_timestamp_conflicts: int = 0
 
     @property
     def dropped_rows(self) -> int:
@@ -403,13 +404,17 @@ def _load_quote_day(path: Path, source_date: date, offset_hours: int) -> QuoteDa
         times, bids, asks = times[order], bids[order], asks[order]
 
     duplicate_timestamps = int(pd.Index(times).duplicated(keep=False).sum())
+    exact_timestamp_conflicts = 0
     if duplicate_timestamps and sequence is None:
         adjacent = times[1:] == times[:-1]
         contradictory = adjacent & ((bids[1:] != bids[:-1]) | (asks[1:] != asks[:-1]))
-        if contradictory.any():
-            raise ValueError(f"{path}: contradictory NBBO states share a timestamp without a sequence key")
+        exact_timestamp_conflicts = int(contradictory.sum())
+        # WRDS exports are ordered by time_m and time_m_nano. A few source rows
+        # still tie on both fields and the table has no quote sequence column;
+        # preserve their extract/file order as the only available tie-break.
         # Byte-identical states at the same timestamp add no execution event.
-        unique = np.r_[True, ~adjacent]
+        same_state = adjacent & (bids[1:] == bids[:-1]) & (asks[1:] == asks[:-1])
+        unique = np.r_[True, ~same_state]
         times, bids, asks = times[unique], bids[unique], asks[unique]
     times = np.array(times, dtype="datetime64[ns]", copy=True)
     bids = np.array(bids, dtype=np.float64, copy=True)
@@ -430,6 +435,7 @@ def _load_quote_day(path: Path, source_date: date, offset_hours: int) -> QuoteDa
         first=first,
         last=last,
         strategy_offset_hours=offset_hours,
+        exact_timestamp_conflicts=exact_timestamp_conflicts,
     )
     return QuoteDay(time=times, bid=bids, ask=asks, coverage=coverage)
 

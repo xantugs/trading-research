@@ -1,5 +1,22 @@
 # Changelog
 
+## 1.7.1 — 2026-09-11
+
+- Replaced the full-archive CSV output with a compact importer format: a 32-byte
+  daily header followed by 12-byte records containing milliseconds since
+  midnight and integer bid/ask price points.
+- Kept every executable NBBO price change and original ordering for changes that
+  share an MT5 millisecond; discarded nanosecond values that MT5 cannot store.
+- Added binary structural/hash verification, a verified CSV migration utility,
+  two-worker monthly conversion and deletion only after exact day-set checks.
+- Preserved Parquet row order as the documented fallback for the rare distinct
+  NBBO states that share a full WRDS timestamp without a quote sequence column,
+  and recorded those transitions in each manifest.
+- Updated and compiled `Import_WRDS_Ticks.mq5` v1.10 with direct binary support;
+  both MQL5 programs compile with zero errors and zero warnings.
+- Converted and independently hash-verified all 1,259 days: 632,204,742 ticks in
+  7.065 GiB instead of the 22.85 GiB CSV projection, with zero verifier problems.
+
 ## 1.7.0 — 2026-09-10
 
 - Removed the Streamlit application, its UI tests, configuration and dependency.
