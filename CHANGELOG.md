@@ -5,6 +5,8 @@
 - Fixed importer error 5307 on current MT5 terminals by setting the writable
   aggregate tick-value property and leaving its calculated profit/loss aliases
   to the terminal.
+- Fixed importer error 5308 for custom symbols created without an origin by
+  setting the volume maximum and step before raising the minimum to one share.
 - Replaced the full-archive CSV output with a compact importer format: a 32-byte
   daily header followed by 12-byte records containing milliseconds since
   midnight and integer bid/ask price points.

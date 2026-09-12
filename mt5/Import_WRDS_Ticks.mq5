@@ -3,7 +3,7 @@
 //| Import verified WRDS-to-MT5 daily tick files into a custom QQQ   |
 //+------------------------------------------------------------------+
 #property script_show_inputs
-#property version "1.11"
+#property version "1.12"
 
 input string InpFileName       = "QQQ_*_ticks.bin"; // Exact name or wildcard; compact .bin preferred
 input string InpCustomSymbol   = "QQQ.WRDS";
@@ -45,9 +45,9 @@ bool PrepareSymbol()
       !SetDoubleProperty(SYMBOL_TRADE_TICK_SIZE, 0.01) ||
       !SetDoubleProperty(SYMBOL_TRADE_CONTRACT_SIZE, 1.0) ||
       !SetDoubleProperty(SYMBOL_TRADE_TICK_VALUE, 0.01) ||
-      !SetDoubleProperty(SYMBOL_VOLUME_MIN, 1.0) ||
+      !SetDoubleProperty(SYMBOL_VOLUME_MAX, 100000.0) ||
       !SetDoubleProperty(SYMBOL_VOLUME_STEP, 1.0) ||
-      !SetDoubleProperty(SYMBOL_VOLUME_MAX, 100000.0))
+      !SetDoubleProperty(SYMBOL_VOLUME_MIN, 1.0))
       return(false);
    if(!CustomSymbolSetString(InpCustomSymbol, SYMBOL_CURRENCY_BASE, "QQQ") ||
       !CustomSymbolSetString(InpCustomSymbol, SYMBOL_CURRENCY_PROFIT, "USD") ||
