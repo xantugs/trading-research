@@ -2,6 +2,9 @@
 
 ## 1.7.1 — 2026-09-11
 
+- Fixed importer error 5307 on current MT5 terminals by setting the writable
+  aggregate tick-value property and leaving its calculated profit/loss aliases
+  to the terminal.
 - Replaced the full-archive CSV output with a compact importer format: a 32-byte
   daily header followed by 12-byte records containing milliseconds since
   midnight and integer bid/ask price points.

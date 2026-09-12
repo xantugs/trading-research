@@ -5,7 +5,7 @@ into verified MetaTrader 5 custom-symbol ticks, then runs the Opening Range
 Breakout strategy in MT5. Python is used only to clean and verify data in the
 active workflow; MT5 is the strategy backtester.
 
-**Project version 1.7.1 · EA v1.50 · importer v1.10.** Both MQL5 programs compile locally with
+**Project version 1.7.1 · EA v1.50 · importer v1.11.** Both MQL5 programs compile locally with
 zero errors and zero warnings. The complete 2018–2022 WRDS archive has passed
 conversion and independent file/hash verification: 1,259 days and 632,204,742
 ticks in 7.065 GiB. Running the importer and tester inside MT5 is the remaining

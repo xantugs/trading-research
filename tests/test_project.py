@@ -182,6 +182,13 @@ def test_qqq_config_uses_equity_and_recorded_spread_semantics():
     assert params.max_gross_leverage == 1
 
 
+def test_mt5_importer_only_sets_the_writable_tick_value_property():
+    source = (ROOT / "mt5" / "Import_WRDS_Ticks.mq5").read_text(encoding="utf-8")
+    assert "SetDoubleProperty(SYMBOL_TRADE_TICK_VALUE, 0.01)" in source
+    assert "SetDoubleProperty(SYMBOL_TRADE_TICK_VALUE_PROFIT" not in source
+    assert "SetDoubleProperty(SYMBOL_TRADE_TICK_VALUE_LOSS" not in source
+
+
 def test_recorded_spread_mode_rejects_an_all_zero_input(tmp_path):
     bars = tmp_path / "ZERO_SPREAD_M1.csv"
     make_synthetic_m1(days=3, seed=42).assign(spread=0).to_csv(bars)
