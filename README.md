@@ -136,6 +136,23 @@ pipeline, Dukascopy utilities and reconciliation tools remain as historical
 research tooling. They are not part of the active WRDS-to-MT5 workflow and do
 not supply or alter the imported custom-symbol ticks.
 
+## Native FTMO history
+
+When testing a strategy intended for an FTMO instrument, prefer the native
+symbol and price history exposed by the FTMO MT5 server. With MT5 open and
+logged in, inspect the available M1 and real-tick window without exporting the
+history:
+
+```powershell
+python run_all.py ftmo-probe --symbol XAUUSD
+```
+
+The command prints the connected company and server, checks small five-minute
+samples by year, refines the first available month and day, and confirms M1
+coverage. In Strategy Tester, select the same native symbol and **Every tick
+based on real ticks**. Availability is specific to the logged-in server and may
+change; rerun the probe after changing accounts or servers.
+
 ## Repository layout
 
 ```text
@@ -146,6 +163,7 @@ run_all.py                     active MT5 launcher; explicit legacy research mod
 scripts/wrds_to_mt5_ticks.py  WRDS Parquet to MT5 tick conversion
 scripts/mt5_csv_to_bin.py     verified legacy CSV to compact binary migration
 scripts/verify_mt5_ticks.py   streaming output and manifest verification
+scripts/probe_mt5_history.py  native broker M1/real-tick coverage probe
 scripts/compile_mt5.ps1       strict MetaEditor compilation
 tests/                        automated Python tests
 docs/MT5_WRDS.md              detailed runbook and limitations

@@ -7,6 +7,8 @@ python run_all.py mt5 --from 2018-01-02 --to 2018-01-03
     Install dependencies, compile and install MQL5, convert WRDS ticks, and verify them.
 python run_all.py mt5 --verify-only
     Verify every prepared compact tick file in MT5 Common Files.
+python run_all.py ftmo-probe
+    Probe native XAUUSD M1 and real-tick coverage on the logged-in MT5 server.
 python run_all.py research --mode both
     Run both modes into one directory and print an m1-vs-tick comparison.
 python run_all.py research --mode m1
@@ -131,11 +133,22 @@ def run_mt5(args) -> int:
     return 0
 
 
+def run_ftmo_probe(argv) -> int:
+    """Run the lightweight native broker-history probe with the project venv."""
+    python = ROOT / ".venv" / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+    if not python.exists():
+        python = Path(sys.executable)
+    return subprocess.call(
+        [str(python), str(ROOT / "scripts" / "probe_mt5_history.py"), *argv], cwd=ROOT
+    )
+
+
 def print_launcher_help() -> None:
     print(
         "ORB Backtest active workflow (MetaTrader 5)\n\n"
         "  Prepare:  python run_all.py mt5 --from YYYY-MM-DD --to YYYY-MM-DD\n"
         "  Verify:   python run_all.py mt5 --verify-only\n"
+        "  FTMO:     python run_all.py ftmo-probe [--symbol XAUUSD]\n"
         "  Research: python run_all.py research --help\n\n"
         "Use `python run_all.py mt5 --help` for paths and optional controls."
     )
@@ -869,6 +882,11 @@ def main() -> int:
     if len(sys.argv) == 1:
         print_launcher_help()
         return 0
+    if sys.argv[1] == "ftmo-probe":
+        if os.name != "nt":
+            print("FTMO probing requires Windows with MetaTrader 5 installed.", file=sys.stderr)
+            return 1
+        return run_ftmo_probe(sys.argv[2:])
     if sys.argv[1] == "mt5":
         try:
             return run_mt5(parse_mt5_args(sys.argv[2:]))
