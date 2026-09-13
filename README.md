@@ -11,6 +11,10 @@ conversion and independent file/hash verification: 1,259 days and 632,204,742
 ticks in 7.065 GiB. Running the importer and tester inside MT5 is the remaining
 manual smoke test. This repository does not establish a trading edge.
 
+Testing the strategy on FTMO's native XAUUSD feed? Use the standalone
+[FTMO XAUUSD workflow](docs/FTMO_WORKFLOW.md). It requires no WRDS data or
+custom-symbol import.
+
 ## One-command setup
 
 Requirements: Windows, Python 3.11–3.13, MetaTrader 5, and the local WRDS tree
@@ -167,6 +171,7 @@ scripts/probe_mt5_history.py  native broker M1/real-tick coverage probe
 scripts/compile_mt5.ps1       strict MetaEditor compilation
 tests/                        automated Python tests
 docs/MT5_WRDS.md              detailed runbook and limitations
+docs/FTMO_WORKFLOW.md         shareable native FTMO XAUUSD workflow
 ```
 
 Market data, generated tick files, compiled binaries, virtual environments and WRDS
