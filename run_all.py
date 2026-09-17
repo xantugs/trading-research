@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Project launcher for the active MT5 workflow and legacy Python research.
+"""Project launcher for FTMO XAUUSD research and the legacy MT5/WRDS tools.
 
 python run_all.py
     Show the active workflow commands.
@@ -9,6 +9,13 @@ python run_all.py mt5 --verify-only
     Verify every prepared compact tick file in MT5 Common Files.
 python run_all.py ftmo-probe
     Probe native XAUUSD M1 and real-tick coverage on the logged-in MT5 server.
+python run_all.py broker-probe
+    Same probe for the broker currently connected; use before configuring research.
+python run_all.py ftmo-data
+    Install research dependencies, cache all available FTMO XAUUSD M1 months,
+    and verify every downloaded partition without running the strategy.
+python run_all.py ftmo-data --with-ticks
+    Also archive and verify native bid/ask ticks for every complete UTC day.
 python run_all.py research --mode both
     Run both modes into one directory and print an m1-vs-tick comparison.
 python run_all.py research --mode m1
@@ -133,7 +140,7 @@ def run_mt5(args) -> int:
     return 0
 
 
-def run_ftmo_probe(argv) -> int:
+def run_broker_probe(argv) -> int:
     """Run the lightweight native broker-history probe with the project venv."""
     python = ROOT / ".venv" / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
     if not python.exists():
@@ -143,14 +150,44 @@ def run_ftmo_probe(argv) -> int:
     )
 
 
+def run_ftmo_data(argv) -> int:
+    """Prepare research dependencies, download M1 history and read it back."""
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument("--config", default="configs/xauusd_orb_research.json")
+    parser.add_argument("--skip-dependencies", action="store_true")
+    parser.add_argument("--with-ticks", action="store_true")
+    options, forward = parser.parse_known_args(argv)
+    python = ROOT / ".venv" / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+    if not python.exists():
+        if options.skip_dependencies:
+            raise ValueError(".venv is missing; remove --skip-dependencies to create it")
+        command([sys.executable, "-m", "venv", ROOT / ".venv"])
+    marker = ROOT / ".venv" / ".orb-research-dependencies"
+    expected = hashlib.sha256((ROOT / "pyproject.toml").read_bytes()).hexdigest()
+    if not options.skip_dependencies and (not marker.exists() or marker.read_text() != expected):
+        command([python, "-m", "pip", "install", "-e", ".[research-v2]"])
+        marker.write_text(expected)
+    args = ["--config", options.config, *forward]
+    if "--help" in forward or "-h" in forward:
+        return subprocess.call([str(python), "-m", "scripts.download_mt5_m1", *args], cwd=ROOT)
+    if not any(value == "--end" or value.startswith("--end=") for value in forward):
+        args.extend(["--end", datetime.now(timezone.utc).date().isoformat()])
+    command([python, "-m", "scripts.download_mt5_m1", *args])
+    command([python, "-m", "scripts.verify_mt5_m1_cache", "--config", options.config])
+    if options.with_ticks:
+        command([python, "-m", "scripts.download_mt5_ticks", *args])
+        command([python, "-m", "scripts.verify_mt5_ticks_cache", "--config", options.config])
+    return 0
+
+
 def print_launcher_help() -> None:
     print(
-        "ORB Backtest active workflow (MetaTrader 5)\n\n"
-        "  Prepare:  python run_all.py mt5 --from YYYY-MM-DD --to YYYY-MM-DD\n"
-        "  Verify:   python run_all.py mt5 --verify-only\n"
-        "  FTMO:     python run_all.py ftmo-probe [--symbol XAUUSD]\n"
-        "  Research: python run_all.py research --help\n\n"
-        "Use `python run_all.py mt5 --help` for paths and optional controls."
+        "ORB research: FTMO-Demo XAUUSD\n\n"
+        "  Probe:    python run_all.py broker-probe --symbol XAUUSD\n"
+        "  Data:     python run_all.py ftmo-data [--with-ticks]\n"
+        "  Baseline: python main.py --config configs/xauusd_orb_research.json\n\n"
+        "Older MT5/WRDS tools: python run_all.py mt5 --help; "
+        "python run_all.py research --help"
     )
 
 
@@ -882,11 +919,20 @@ def main() -> int:
     if len(sys.argv) == 1:
         print_launcher_help()
         return 0
-    if sys.argv[1] == "ftmo-probe":
+    if sys.argv[1] in ("ftmo-probe", "broker-probe"):
         if os.name != "nt":
-            print("FTMO probing requires Windows with MetaTrader 5 installed.", file=sys.stderr)
+            print("Broker probing requires Windows with MetaTrader 5 installed.", file=sys.stderr)
             return 1
-        return run_ftmo_probe(sys.argv[2:])
+        return run_broker_probe(sys.argv[2:])
+    if sys.argv[1] == "ftmo-data":
+        try:
+            return run_ftmo_data(sys.argv[2:])
+        except KeyboardInterrupt:
+            print("\nStopped.")
+            return 130
+        except (OSError, ValueError, ImportError, subprocess.CalledProcessError) as exc:
+            print(f"FTMO data preparation failed: {exc}", file=sys.stderr)
+            return 1
     if sys.argv[1] == "mt5":
         try:
             return run_mt5(parse_mt5_args(sys.argv[2:]))

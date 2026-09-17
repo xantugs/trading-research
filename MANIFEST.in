@@ -1,7 +1,8 @@
 include README.md CHANGELOG.md CONTRIBUTING.md pyproject.toml requirements*.txt
-include run_all.py fetch_dukascopy.py fetch_mt5.py reconcile.py
+include main.py run_all.py fetch_dukascopy.py fetch_mt5.py reconcile.py
 include .gitignore .gitattributes
 recursive-include orb *.py
+recursive-include orb_research *.py
 recursive-include tests *.py
 recursive-include configs *.json
 recursive-include docs *.md

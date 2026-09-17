@@ -1,0 +1,9 @@
+{
+  "account_size": 5000,
+  "phase1_target_pct": 10,
+  "phase2_target_pct": 5,
+  "daily_loss_limit_pct": 5,
+  "max_loss_limit_pct": 10,
+  "min_profitable_days": 0,
+  "reset_timezone": "UTC"
+}

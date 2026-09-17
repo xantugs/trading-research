@@ -1,5 +1,22 @@
 # Changelog
 
+## 2.0.0a1 — 2026-09-17
+
+- Start a broker-neutral XAUUSD Python research pipeline with M5 signals, M1
+  bid/ask execution approximation, New York/London timezone handling and a
+  chronological final-holdout guard.
+- Cache native MT5 M1 bars by exact server and symbol; reject broker or symbol
+  specification mismatches and incomplete months.
+- Produce baseline trades, metrics, monthly/yearly returns, provenance and HTML
+  charts. Add optional seeded Monte Carlo, confidence intervals, illustrative
+  prop-rule replay and cost sensitivity after baseline review.
+- Preserve the previous MT5/WRDS guide as historical documentation. Confirm the
+  FTMO-Demo XAUUSD source and verify 105 monthly M1 partitions (2018 onward)
+  plus 200,890,543 native bid/ask ticks (October 2021 onward). Keep the
+  2025-onward holdout out of the baseline; label the one missing tick day and
+  anomalous 2021 zero-spread months. No real edge or prop-firm pass result is
+  claimed.
+
 ## 1.7.1 — 2026-09-11
 
 - Fixed importer error 5307 on current MT5 terminals by setting the writable
