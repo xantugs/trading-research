@@ -53,6 +53,13 @@ def run_broker_probe(argv: list[str]) -> int:
     return 0
 
 
+def run_web(argv: list[str]) -> int:
+    """Start the private dashboard with the same local Python environment."""
+    python = ensure_research_python()
+    command([python, "-m", "webapp.server", *argv])
+    return 0
+
+
 def run_ftmo_data(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(
         prog="python run_all.py ftmo-data",
@@ -241,13 +248,14 @@ def main() -> int:
         print("Python 3.11, 3.12 or 3.13 is required.", file=sys.stderr)
         return 1
     commands = {"backtest": run_backtest, "ftmo-data": run_ftmo_data,
-                "broker-probe": run_broker_probe}
+                "broker-probe": run_broker_probe, "web": run_web}
     if len(sys.argv) < 2 or sys.argv[1] in ("-h", "--help"):
         print("FTMO XAUUSD ORB research\n\n"
               "  python run_all.py backtest --config configs/xauusd_orb_research.json\n"
               "  python run_all.py backtest --cached-only\n"
               "  python run_all.py ftmo-data --with-ticks\n"
-              "  python run_all.py broker-probe --symbol XAUUSD\n")
+              "  python run_all.py broker-probe --symbol XAUUSD\n"
+              "  python run_all.py web --port 8520\n")
         return 0
     selected = sys.argv[1]
     if selected not in commands:

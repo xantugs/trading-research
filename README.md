@@ -76,6 +76,34 @@ FTMO's exact Gold
 commission and the slippage assumption must be checked against the account's
 contract terms and trade history before interpreting returns.
 
+## Private browser dashboard
+
+To tune parameters without editing JSON, start the local web dashboard:
+
+```powershell
+python run_all.py web
+```
+
+Open `http://127.0.0.1:8520/` and enter the access key printed in the terminal
+(also saved in the ignored `outputs/web/access_key.txt`). The page lets you
+adjust the session, range, risk, stop, target and cost assumptions. Run starts a
+background `run_all.py backtest --cached-only` job against the **2018–2024
+development period only**. It shows stage-based progress, recent log lines,
+closed-trade drawdown and a persistent history of key results. Only one run may
+use the local worker at a time. Checking the tick option adds selected exit
+spot-checks; it does not switch the engine to tick execution.
+
+The web server binds to localhost and requires the key for every API request.
+For a temporary HTTPS link from another device, install `cloudflared` and run
+`cloudflared tunnel --url http://127.0.0.1:8520` in another terminal. Keep the
+worker and tunnel running while you use the link. [Cloudflare Quick Tunnels]
+(https://developers.cloudflare.com/tunnel/get-started/#quick-tunnels-development)
+are intended for testing; use an authenticated named tunnel for a stable URL.
+The browser view exposes results and parameters, not raw broker data. Vercel
+can host a static page, but its functions cannot read the data and MT5 login
+on this Windows machine; the long-running worker must stay on an accessible
+host. Do not publish the access key or the `outputs/` directory.
+
 After reviewing the baseline, optional analysis is available with:
 
 ```powershell

@@ -2,6 +2,8 @@ include README.md CONTRIBUTING.md pyproject.toml requirements*.txt
 include main.py run_all.py
 include .gitignore .gitattributes
 recursive-include orb_research *.py
+recursive-include webapp *.py
+recursive-include webapp/static *.html *.css *.js
 recursive-include tests *.py
 recursive-include configs *.json
 recursive-include docs *.md
