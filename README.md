@@ -94,15 +94,26 @@ use the local worker at a time. Checking the tick option adds selected exit
 spot-checks; it does not switch the engine to tick execution.
 
 The web server binds to localhost and requires the key for every API request.
-For a temporary HTTPS link from another device, install `cloudflared` and run
-`cloudflared tunnel --url http://127.0.0.1:8520` in another terminal. Keep the
-worker and tunnel running while you use the link. [Cloudflare Quick Tunnels]
-(https://developers.cloudflare.com/tunnel/get-started/#quick-tunnels-development)
-are intended for testing; use an authenticated named tunnel for a stable URL.
+To reach it from a phone or another machine, add `--tunnel`:
+
+```powershell
+python run_all.py web --tunnel
+```
+
+That starts `cloudflared` alongside the worker and prints a temporary
+`https://….trycloudflare.com` link a few seconds later. The link is different
+on every start and stops working when the window closes; the worker keeps
+binding to localhost, and the access key still protects every API call. Install
+cloudflared once with `winget install Cloudflare.cloudflared` (other platforms:
+[Cloudflare downloads](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/)).
+[Quick Tunnels](https://developers.cloudflare.com/tunnel/get-started/#quick-tunnels-development)
+are meant for testing; use an authenticated named tunnel for a stable address.
+
 The browser view exposes results and parameters, not raw broker data. Vercel
 can host a static page, but its functions cannot read the data and MT5 login
 on this Windows machine; the long-running worker must stay on an accessible
-host. Do not publish the access key or the `outputs/` directory.
+host, which is why the tunnel points at it instead. Do not publish the access
+key or the `outputs/` directory.
 
 After reviewing the baseline, optional analysis is available with:
 

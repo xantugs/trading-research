@@ -8,6 +8,7 @@ import json
 import os
 import re
 import secrets
+import shutil
 import subprocess
 import sys
 import threading
@@ -27,6 +28,10 @@ STATIC = Path(__file__).resolve().parent / "static"
 CONFIG = ROOT / "configs" / "xauusd_orb_research.json"
 RUN_ID = re.compile(r"^[A-Za-z0-9_-]{1,80}$")
 PROGRESS = re.compile(r"^\[[#-]+\]\s+(\d+)%\s+\d+/\d+\s+(.+)$")
+TUNNEL_URL = re.compile(r"https://[a-z0-9-]+\.trycloudflare\.com")
+CLOUDFLARED_INSTALL = ("cloudflared is not installed. On Windows: winget install Cloudflare.cloudflared "
+                       "(other platforms: developers.cloudflare.com/cloudflare-one/connections/"
+                       "connect-networks/downloads). Then rerun with --tunnel.")
 EDITABLE = {
     "session_open", "session_exit", "range_minutes", "risk_percent", "reward_risk",
     "stop_method", "stop_width_multiple", "atr_stop_multiple", "breakout_buffer_atr",
@@ -367,26 +372,86 @@ def make_handler(app: ResearchWeb):
     return Handler
 
 
-def main(argv: list[str] | None = None) -> None:
+def start_tunnel(port: int) -> subprocess.Popen:
+    """Open a temporary public HTTPS link to the local dashboard via cloudflared.
+
+    The server itself keeps binding to localhost; cloudflared connects to it from
+    this machine and publishes a throwaway *.trycloudflare.com address. The link
+    is different every start and closes with the process. Transport is public -
+    the access key is what protects the data, same as on localhost.
+    """
+    binary = shutil.which("cloudflared")
+    if not binary:
+        raise FileNotFoundError(CLOUDFLARED_INSTALL)
+    process = subprocess.Popen(
+        [binary, "tunnel", "--url", f"http://127.0.0.1:{port}", "--no-autoupdate"],
+        stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True,
+        encoding="utf-8", errors="replace")
+    threading.Thread(target=_relay_tunnel, args=(process,), daemon=True,
+                     name="orb-tunnel").start()
+    return process
+
+
+def _relay_tunnel(process: subprocess.Popen) -> None:
+    """Watch cloudflared's log for the public address and announce it once."""
+    announced = False
+    assert process.stderr is not None
+    for line in process.stderr:
+        match = TUNNEL_URL.search(line)
+        if match and not announced:
+            announced = True
+            print(f"\nPublic link: {match.group(0)}", flush=True)
+            print("Anyone with the link reaches the login page; the access key protects the data.",
+                  flush=True)
+            print("It changes on every start and stops working when this window closes.\n",
+                  flush=True)
+        elif not announced and ("ERR" in line or "error" in line.lower()):
+            print(f"cloudflared: {line.rstrip()}", file=sys.stderr, flush=True)
+    code = process.wait()
+    if not announced:
+        print(f"cloudflared exited (code {code}) before publishing a link; "
+              "the local dashboard is still running.", file=sys.stderr, flush=True)
+
+
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8520)
+    parser.add_argument("--tunnel", action="store_true",
+                        help="Also publish a temporary public HTTPS link with cloudflared, "
+                             "for reaching the dashboard from a phone or another machine")
     args = parser.parse_args(argv)
     if args.host not in ("127.0.0.1", "localhost"):
-        raise ValueError("The research server must bind to localhost; use a tunnel for remote access")
+        raise ValueError("The research server must bind to localhost; use --tunnel for remote access")
     app = ResearchWeb()
     server = ThreadingHTTPServer((args.host, args.port), make_handler(app))
     server.daemon_threads = True
-    print(f"Dashboard: http://{args.host}:{args.port}/", flush=True)
-    print(f"Access key: {app.key}", flush=True)
-    print("The key is also stored in outputs/web/access_key.txt (ignored by Git).", flush=True)
+    tunnel: subprocess.Popen | None = None
     try:
+        if args.tunnel:
+            try:
+                tunnel = start_tunnel(args.port)
+            except FileNotFoundError as exc:
+                print(exc, file=sys.stderr, flush=True)
+                return 1
+        print(f"Dashboard: http://{args.host}:{args.port}/", flush=True)
+        print(f"Access key: {app.key}", flush=True)
+        print("The key is also stored in outputs/web/access_key.txt (ignored by Git).", flush=True)
+        if tunnel is not None:
+            print("Opening the public link (usually a few seconds)...", flush=True)
         server.serve_forever(poll_interval=0.25)
     except KeyboardInterrupt:
         pass
     finally:
+        if tunnel is not None and tunnel.poll() is None:
+            tunnel.terminate()
+            try:
+                tunnel.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                tunnel.kill()
         server.server_close()
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

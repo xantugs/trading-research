@@ -200,3 +200,65 @@ def test_a_restart_marks_an_abandoned_run_interrupted(tmp_path):
     assert recovered["state"] == "interrupted"
     assert recovered["finished_at"], "an interrupted run must not look open forever"
     assert restarted.active_id is None
+
+
+# --- public link ---------------------------------------------------------------
+
+def test_tunnel_refuses_clearly_when_cloudflared_is_missing(monkeypatch):
+    import webapp.server as server
+
+    monkeypatch.setattr(server.shutil, "which", lambda name: None)
+    with pytest.raises(FileNotFoundError, match="winget install Cloudflare.cloudflared"):
+        server.start_tunnel(8520)
+
+
+def test_tunnel_flag_exits_before_serving_when_cloudflared_is_missing(tmp_path, monkeypatch):
+    import webapp.server as server
+
+    monkeypatch.setattr(server.shutil, "which", lambda name: None)
+    monkeypatch.setattr(server, "ResearchWeb",
+                        lambda: ResearchWeb(root=tmp_path, config_path=CONFIG))
+    served = []
+    monkeypatch.setattr(server.ThreadingHTTPServer, "serve_forever",
+                        lambda self, poll_interval=0.5: served.append(True))
+    assert server.main(["--tunnel", "--port", "0"]) == 1
+    assert not served, "must not start serving without the link the user asked for"
+
+
+def test_public_link_is_announced_once_from_cloudflared_output(capsys):
+    import webapp.server as server
+
+    class FakeTunnel:
+        stderr = iter([
+            "2026-09-17T12:00:00Z INF Thank you for trying Cloudflare Tunnel.\n",
+            "2026-09-17T12:00:01Z INF +----------------------------------------------+\n",
+            "2026-09-17T12:00:01Z INF |  https://quiet-otter-1234.trycloudflare.com  |\n",
+            "2026-09-17T12:00:01Z INF +----------------------------------------------+\n",
+            "2026-09-17T12:00:02Z INF Registered tunnel connection https://quiet-otter-1234.trycloudflare.com\n",
+        ])
+
+        @staticmethod
+        def wait():
+            return 0
+
+    server._relay_tunnel(FakeTunnel())
+    out = capsys.readouterr().out
+    assert out.count("https://quiet-otter-1234.trycloudflare.com") == 1
+    assert "access key protects the data" in out
+
+
+def test_relay_reports_a_tunnel_that_dies_without_a_link(capsys):
+    import webapp.server as server
+
+    class DeadTunnel:
+        stderr = iter(["2026-09-17T12:00:00Z ERR failed to connect to the edge\n"])
+
+        @staticmethod
+        def wait():
+            return 1
+
+    server._relay_tunnel(DeadTunnel())
+    err = capsys.readouterr().err
+    assert "failed to connect" in err
+    assert "exited (code 1) before publishing a link" in err
+    assert "local dashboard is still running" in err

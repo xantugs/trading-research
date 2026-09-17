@@ -255,7 +255,8 @@ def main() -> int:
               "  python run_all.py backtest --cached-only\n"
               "  python run_all.py ftmo-data --with-ticks\n"
               "  python run_all.py broker-probe --symbol XAUUSD\n"
-              "  python run_all.py web --port 8520\n")
+              "  python run_all.py web --port 8520\n"
+              "  python run_all.py web --tunnel\n")
         return 0
     selected = sys.argv[1]
     if selected not in commands:
