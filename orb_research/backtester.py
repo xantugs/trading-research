@@ -7,7 +7,7 @@ from zoneinfo import ZoneInfo
 import pandas as pd
 
 from .config import Config
-from .risk import size_position
+from .risk import size_position, trade_commission
 from .strategy import Signal, find_signals
 
 
@@ -114,7 +114,7 @@ def _one_trade(m1: pd.DataFrame, signal: Signal, equity: float, config: Config):
     if result is None:
         return None, "unresolved"
     exit_time, exit_price, exit_reason, ambiguous = result
-    commission = lots * config.commission_per_lot_side * 2
+    commission = trade_commission(lots, entry, exit_price, config)
     pnl = signal.direction * (exit_price - entry) * lots * config.contract_size - commission
     record = {
         "timestamp": entry_time, "session_date": signal.session_date,
@@ -127,7 +127,8 @@ def _one_trade(m1: pd.DataFrame, signal: Signal, equity: float, config: Config):
         "exit_time": exit_time, "exit": exit_price, "exit_reason": exit_reason,
         "position_size": lots, "risk_percent": config.risk_percent,
         "estimated_risk": estimated_risk, "R_result": pnl / estimated_risk,
-        "PnL": pnl, "MAE": mae, "MFE": mfe, "ambiguous_m1": ambiguous,
+        "PnL": pnl, "commission": commission, "MAE": mae, "MFE": mfe,
+        "ambiguous_m1": ambiguous,
         "entry_spread": spread,
     }
     return record, None

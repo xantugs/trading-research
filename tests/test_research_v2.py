@@ -16,6 +16,7 @@ from orb_research.backtester import backtest
 from orb_research.config import Config
 from orb_research.data_loader import validate_m1
 from orb_research.report import metrics, write_baseline
+from orb_research.risk import size_position, trade_commission
 from orb_research.strategy import find_signals
 from orb_research.monte_carlo import trade_sequence_monte_carlo
 from orb_research.prop_simulator import PropRules, simulate_prop
@@ -76,6 +77,23 @@ def test_same_m1_stop_and_target_is_a_loss():
     assert bool(trades.iloc[0].ambiguous_m1)
     assert trades.iloc[0].R_result < 0
     assert trades.iloc[0].timestamp == trades.iloc[0].exit_time
+
+
+def test_notional_commission_reduces_size_and_net_result():
+    config = _config(commission_rate_pct_side=0.0005)
+    lots, estimated_risk = size_position(4010, 2000, 1990, config)
+    assert lots > 0
+    assert estimated_risk <= 20.05
+    assert trade_commission(1, 2000, 1990, config) == pytest.approx(1.995)
+    assert lots < size_position(4010, 2000, 1990, _config())[0]
+
+    trades, _ = backtest(_day("2024-01-02"), config)
+    trade = trades.iloc[0]
+    assert trade.commission == pytest.approx(
+        trade_commission(trade.position_size, trade.entry, trade.exit, config))
+    assert trade.PnL == pytest.approx(
+        (trade.exit - trade.entry) * trade.position_size * config.contract_size
+        - trade.commission)
 
 
 def test_holdout_is_cut_before_strategy_and_report(tmp_path):

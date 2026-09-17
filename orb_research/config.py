@@ -40,6 +40,7 @@ class Config:
     max_lot: float = 100.0
     initial_equity: float = 5000.0
     commission_per_lot_side: float = 0.0
+    commission_rate_pct_side: float = 0.0
     slippage_price: float = 0.02
     spread_multiplier: float = 1.0
     fallback_spread_price: float = 0.20
@@ -86,7 +87,7 @@ class Config:
                 raise ValueError(f"{name} must be positive")
         if self.risk_percent > 2.0:
             raise ValueError("research risk_percent is capped at 2%")
-        for name in ("commission_per_lot_side", "slippage_price", "fallback_spread_price",
+        for name in ("commission_per_lot_side", "commission_rate_pct_side", "slippage_price", "fallback_spread_price",
                      "breakout_buffer_atr"):
             if getattr(self, name) < 0:
                 raise ValueError(f"{name} must be nonnegative")

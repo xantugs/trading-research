@@ -20,6 +20,7 @@
   "stop_method": "opposite_range",
   "initial_equity": 5000,
   "commission_per_lot_side": 0,
+  "commission_rate_pct_side": 0.0005,
   "slippage_price": 0.02,
   "spread_multiplier": 1,
   "fallback_spread_price": 0.20,

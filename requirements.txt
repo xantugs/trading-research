@@ -1,1 +1,1 @@
--e .[dev,wrds]
+-e .[research-v2,dev]

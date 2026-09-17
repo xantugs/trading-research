@@ -1,15 +1,27 @@
 # XAUUSD ORB research, version 2
 
-This is the active research path. The older MetaTrader EA, WRDS/QQQ importer and
-Python twin remain in the repository as historical work. Version 2 starts with
-a deliberately plain, independently implemented Python baseline. Its purpose
+This project starts with a deliberately plain Python baseline. Its purpose
 is to test whether the opening-range rule survives unseen dates and trading
 costs; it does not target a specified monthly return.
 
 ## Status
 
-The baseline code and synthetic verification are ready. **A real FTMO-Demo
-baseline has not been run.** On 17 September 2026, the connected terminal
+The baseline code and synthetic verification are ready. A real FTMO-Demo
+development-period baseline was run on 17 September 2026: 1,749 trades,
+−0.120 mean modeled net R per trade, −62.22% cumulative return, and all seven
+calendar years negative. Twelve representative trades were checked directly
+against cached minute bars, including stop, target, time, gap, ambiguous
+same-minute exits, and both 2024 US DST changes. The audit is saved under
+`outputs/runs/<timestamp>/trade_audit.json`. These are provisional bar-based
+results, not tick-exact fills. A second check read the native tick order for
+eight selected exits. The four DST samples agreed with M1. Of four ambiguous
+M1 exits with tick history, three touched target first and one touched stop
+first. The tick sample is saved as `sample_tick_exit_comparison.json`. Revaluing
+those three positions at their original size would recover about $86 before
+the changed commission; even a deliberately favorable correction of all 13
+ambiguous exits would recover at most about $472 at original sizes, versus
+$3,111 modeled net loss. These figures are diagnostics, not a tick-replayed
+equity curve. On 17 September 2026, the connected terminal
 reported `FTMO Global Markets Ltd / FTMO-Demo` with `XAUUSD`: 100 oz per lot,
 0.01 minimum/step, 0.01 price point and USD account currency. Native M1 bars
 were downloaded in 105 UTC-month files from 2 January 2018 through 16 September
@@ -33,12 +45,17 @@ Use Windows, Python 3.11–3.13 and a MetaTrader 5 terminal logged into the
 intended FTMO-Demo account. From the repository root:
 
 ```powershell
-py -3.13 -m venv .venv
-.\.venv\Scripts\python -m pip install -e ".[research-v2,dev]"
-python run_all.py broker-probe --symbol XAUUSD --start-year 2021
-python run_all.py ftmo-data --with-ticks
-python main.py --config configs/xauusd_orb_research.json
+python run_all.py backtest --config configs/xauusd_orb_research.json
 ```
+
+Edit the JSON parameters before running. The command installs required Python
+packages, checks the connected broker, prepares and verifies M1 and native tick
+data through the development end date, runs the strategy, generates charts,
+audits sample bars and tick exits, and saves a timestamped report bundle under
+`outputs/runs/`. A completed first end-to-end run on 17 September 2026 used
+the existing archive and needed no manual step after choosing the config.
+`--cached-only` verifies and reuses the archive without MT5 connectivity;
+`--skip-ticks` omits tick preparation and comparison.
 
 The probe prints the company, server, exact symbol and approximate first
 real-tick date. Compare it with the account you intend to trade. Edit
@@ -82,10 +99,12 @@ before claiming high-fidelity execution.
 
 **Cost calibration is still required.** FTMO says to check the instrument's
 [specification in the trading platform](https://ftmo.com/en/faq/what-are-the-account-specifications/).
-The initial config sets commission to zero as an explicit *uncalibrated placeholder*;
-the resulting net return must not be called broker-net performance. Enter the
-verified equivalent cost for the intended account before interpreting profit
-or prop-rule results. The configured spread fallback and slippage are also
+The development config models 0.0005% of notional per side for metals CFD,
+inferred from [FTMO's 2025 published change](https://ftmo.com/en/blog/trading-updates/trading-update-25-sep-2025/)
+to 0.0007% per side effective 29 September 2025. This does not prove the same
+rate applied throughout 2018–2024 or that our account was charged identically.
+The modeled commission paid across baseline trades was about $155.53. The
+configured spread fallback and slippage are also
 assumptions to be checked against account history. April, May, June, and
 September 2021 have more than 5% zero-spread M1 bars (5.6%, 25.9%, 18.8%, and
 55.9% respectively). There are no native broker ticks for those months to
@@ -94,7 +113,7 @@ remain weak.
 
 ## Outputs
 
-One command saves under `outputs/xauusd_baseline/`:
+One command saves under a new `outputs/runs/<timestamp>/` folder:
 
 - `trades.csv`, `monthly_returns.csv`, `yearly_returns.csv`
 - `metrics.json`, `diagnostics.json`, `data_provenance.json`, `config_used.json`
@@ -116,8 +135,10 @@ from the research brief, not from a verified program contract.
 
 1. Confirm target account, server, symbol, contract, spread and data coverage.
 2. Run the unmodified baseline on the development period only.
-3. Hand-inspect at least ten signals and fills, including DST weeks and losing
-   trades. Compare a sample to MT5 real-tick Strategy Tester output.
+3. Audit at least ten signals and fills, including DST weeks and losing
+   trades. Twelve bar-level checks passed and eight selected exits were
+   compared with archived ticks; broader tick replay and MT5 Strategy Tester
+   comparison are next.
 4. Calibrate commission and slippage; run normal, 1.5× and 2× cost scenarios.
 5. Only if the baseline passes these checks, implement and run a small random
    parameter search on training data, followed by walk-forward tests and local

@@ -96,8 +96,8 @@ def main(argv=None) -> int:
         report_path.parent.mkdir(parents=True, exist_ok=True)
         report_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
         print(f"Quality report: {report_path.resolve()}")
-        print("The 2025-onward files were checked for data quality only; no strategy "
-              "results were computed.")
+        print("Data-quality checks computed no strategy outcomes. The backtest runner "
+              "reads development months only.")
         return 0
     except (OSError, KeyError, RuntimeError, ValueError) as exc:
         print(f"Verification failed: {exc}", file=sys.stderr)

@@ -57,6 +57,7 @@ def main(argv=None) -> int:
                     config, spread_multiplier=config.spread_multiplier * factor,
                     slippage_price=config.slippage_price * factor,
                     commission_per_lot_side=config.commission_per_lot_side * factor,
+                    commission_rate_pct_side=config.commission_rate_pct_side * factor,
                 )
                 cost_trades, _ = backtest(m1, cost_config)
                 if cost_trades.empty:

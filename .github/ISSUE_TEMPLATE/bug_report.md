@@ -1,6 +1,6 @@
 ---
 name: Bug report
-about: Reproduce a data, engine, app or reconciliation problem
+about: Reproduce an FTMO data, backtest or report problem
 title: ""
 labels: bug
 assignees: ""
@@ -18,5 +18,6 @@ Include a small synthetic example when possible.
 Relevant errors, code revision and redacted manifest fields.
 Do not attach account credentials, private logs or licensed market data.
 
-## MT5 comparison (if relevant)
-Symbol, timeframe, modeling mode, account type, EA version, spread/cost settings.
+## Run details
+Run folder, symbol, session, data window, spread/cost settings, and whether
+the M1 or tick audit found a discrepancy.

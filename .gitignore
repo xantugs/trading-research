@@ -15,11 +15,7 @@ htmlcov/
 !.env.example
 .cache/
 outputs/
-data/*
-!data/README.md
-*.ex5
-*_ticks.bin
+data/
 *.log
-reconcile_report.csv
 .DS_Store
 Thumbs.db

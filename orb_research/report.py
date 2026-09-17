@@ -121,6 +121,7 @@ def metrics(trades: pd.DataFrame, config: Config) -> tuple[dict, pd.DataFrame, p
         "profitable_month_fraction": profitable_months,
         "profitable_year_fraction": profitable_years,
         "ambiguous_m1_exits": int(ordered.ambiguous_m1.sum()),
+        "modeled_commission_paid": float(ordered.commission.sum()),
         "by_direction": by_direction,
     }
     return summary, monthly, yearly
@@ -165,6 +166,7 @@ Data source: `{provenance.get('company', 'unknown')}` / `{provenance.get('server
 | Average monthly return | {_fmt(summary['average_monthly_return_pct'])}% |
 | Maximum closed-equity drawdown | {_fmt(summary['max_drawdown_pct'])}% |
 | Ambiguous M1 exits resolved stop-first | {summary['ambiguous_m1_exits']} |
+| Modeled commission paid | ${_fmt(summary['modeled_commission_paid'])} |
 
 ## Direction
 
@@ -187,6 +189,9 @@ Data source: `{provenance.get('company', 'unknown')}` / `{provenance.get('server
 - The recorded MT5 bar spread is an approximation of the actual entry/exit
   spread. Fallback spread is used when the field is zero. Slippage and
   commission come from the configuration and require broker calibration.
+- Commission model: {config.commission_rate_pct_side}% of entry/exit notional
+  per side plus ${config.commission_per_lot_side} per lot per side. Historical
+  FTMO account charges have not been independently verified for every year.
 - Drawdown is measured at closed trades, not intratrade equity or a firm's
   daily-limit reset. This report is not a prop-firm pass estimate.
 - This is one baseline configuration, not evidence of a robust edge. Do not

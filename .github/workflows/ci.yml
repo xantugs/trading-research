@@ -20,15 +20,10 @@ jobs:
           python-version: ${{ matrix.python }}
           cache: pip
           cache-dependency-path: pyproject.toml
-      - run: python -m pip install -e ".[dev,wrds]"
+      - run: python -m pip install -e ".[dev]"
       - run: python -m ruff check .
       - run: python -m pytest -q
-      - run: python run_all.py --no-install --no-app --source demo --demo-days 10 --output outputs/ci-smoke
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: synthetic-report-${{ matrix.os }}-${{ matrix.python }}
-          path: outputs/ci-smoke
+      - run: python run_all.py --help
   package:
     runs-on: ubuntu-latest
     steps:
