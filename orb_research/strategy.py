@@ -36,6 +36,11 @@ def prior_daily_atr(m1: pd.DataFrame, period: int = 14) -> pd.Series:
     return atr
 
 
+def breakout_buffer(config: Config, prior_atr: float) -> float:
+    """Distance beyond the opening range a signal close must clear; the audit uses this too."""
+    return config.breakout_buffer_atr * prior_atr if config.breakout_buffer_atr else 0.0
+
+
 def signal_bars(m1: pd.DataFrame, minutes: int) -> pd.DataFrame:
     rule = f"{minutes}min"
     grouped = m1.resample(rule, label="left", closed="left", origin="epoch")
@@ -80,7 +85,7 @@ def find_signals(m1: pd.DataFrame, config: Config):
         if (config.breakout_buffer_atr > 0 or config.stop_method == "atr") and not np.isfinite(prior_atr):
             counts["missing_atr"] += 1
             continue
-        buffer = config.breakout_buffer_atr * prior_atr if config.breakout_buffer_atr else 0.0
+        buffer = breakout_buffer(config, prior_atr)
         candidates = m5.loc[(m5.index >= end) &
                             (m5.index + timedelta(minutes=config.signal_minutes) <= cutoff)]
         found = False

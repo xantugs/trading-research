@@ -6,13 +6,15 @@ import argparse
 import json
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 
 from orb_research.config import load_config
 from orb_research.data_loader import load_m1
+from orb_research.strategy import breakout_buffer, prior_daily_atr
 
 
-def audit(trade: pd.Series, bars: pd.DataFrame, config) -> dict:
+def audit(trade: pd.Series, bars: pd.DataFrame, config, atr: pd.Series) -> dict:
     start = pd.Timestamp(trade.range_start)
     end = pd.Timestamp(trade.range_end)
     signal_open = pd.Timestamp(trade.signal_open)
@@ -22,16 +24,22 @@ def audit(trade: pd.Series, bars: pd.DataFrame, config) -> dict:
     assert len(opening) == int((end - start).total_seconds() / 60)
     assert trade.range_high == opening.high.max()
     assert trade.range_low == opening.low.min()
+    prior_atr = float(atr.get(start.floor("D"), np.nan))
+    if config.breakout_buffer_atr > 0 or config.stop_method == "atr":
+        assert np.isfinite(prior_atr)
+    buffer = breakout_buffer(config, prior_atr)
+    upper_trigger = trade.range_high + buffer
+    lower_trigger = trade.range_low - buffer
 
     previous = bars.loc[(bars.index >= end) & (bars.index < signal_open)]
     for _, group in previous.resample(f"{config.signal_minutes}min", label="left", closed="left"):
         if len(group) == config.signal_minutes:
-            assert trade.range_low <= group.close.iloc[-1] <= trade.range_high
+            assert lower_trigger <= group.close.iloc[-1] <= upper_trigger
     signal = bars.loc[(bars.index >= signal_open) & (bars.index < entry_time)]
     assert len(signal) == config.signal_minutes
     assert trade.signal_price == signal.close.iloc[-1]
-    assert ((trade.signal_price > trade.range_high) if trade.direction == "long"
-            else (trade.signal_price < trade.range_low))
+    assert ((trade.signal_price > upper_trigger) if trade.direction == "long"
+            else (trade.signal_price < lower_trigger))
 
     first = bars.loc[entry_time]
     recorded = float(first.spread) * config.point
@@ -46,6 +54,10 @@ def audit(trade: pd.Series, bars: pd.DataFrame, config) -> dict:
         expected_stop = (trade.range_high - width * config.stop_width_multiple
                          if trade.direction == "long" else
                          trade.range_low + width * config.stop_width_multiple)
+        assert abs(trade.stop - expected_stop) < 1e-7
+    elif config.stop_method == "atr":
+        sign = 1 if trade.direction == "long" else -1
+        expected_stop = trade.entry - sign * prior_atr * config.atr_stop_multiple
         assert abs(trade.stop - expected_stop) < 1e-7
     expected_target = trade.entry + (trade.entry - trade.stop) * config.reward_risk
     assert abs(trade.take_profit - expected_target) < 1e-7
@@ -87,7 +99,7 @@ def audit(trade: pd.Series, bars: pd.DataFrame, config) -> dict:
     return {"date": trade.session_date, "direction": trade.direction,
             "signal_utc": str(entry_time), "exit_utc": str(exit_time),
             "exit_reason": trade.exit_reason, "net_R": round(float(trade.R_result), 4),
-            "status": "passed"}
+            "breakout_buffer": round(buffer, 4), "status": "passed"}
 
 
 def main() -> None:
@@ -96,6 +108,7 @@ def main() -> None:
     args = parser.parse_args()
     config = load_config(args.config)
     bars, _ = load_m1(config)
+    atr = prior_daily_atr(bars)
     trades = pd.read_csv(Path(config.output_dir) / "trades.csv")
     selected: list[int] = []
 
@@ -117,7 +130,7 @@ def main() -> None:
             break
         if index not in selected:
             selected.append(int(index))
-    results = [audit(trades.loc[index], bars, config) for index in selected]
+    results = [audit(trades.loc[index], bars, config, atr) for index in selected]
     out = Path(config.output_dir) / "trade_audit.json"
     out.write_text(json.dumps(results, indent=2), encoding="utf-8")
     print(f"Audited {len(results)} trades against cached M1 bars; all passed. {out}")

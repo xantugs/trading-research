@@ -69,6 +69,43 @@ def test_new_york_dst_and_next_bar_entry():
     assert (trades.position_size > 0).all()
 
 
+def _buffered_day(day: str) -> pd.DataFrame:
+    """A session whose first M5 bar closes above the range but inside the ATR buffer."""
+    frame = _day(day)
+    first = frame.index[0]
+    for offset in (34, 35, 36):
+        frame.loc[first + timedelta(minutes=offset), ["open", "high", "low", "close"]] = [100.0, 100.5, 99.5, 100.0]
+    frame.loc[first + timedelta(minutes=34), ["high", "close"]] = [101.3, 101.3]  # poke: no signal
+    frame.loc[first + timedelta(minutes=39), ["high", "close"]] = [102.0, 102.0]  # real breakout
+    frame.loc[first + timedelta(minutes=40), ["open", "high", "low", "close"]] = [102.0, 102.5, 101.5, 102.0]
+    frame.loc[first + timedelta(minutes=41), ["open", "high", "low", "close"]] = [102.0, 110.0, 101.5, 109.0]
+    return frame
+
+
+def test_breakout_buffer_skips_pokes_and_the_audit_uses_the_same_threshold():
+    from scripts.audit_ftmo_baseline import audit
+    from orb_research.strategy import breakout_buffer, prior_daily_atr
+
+    days = [day.strftime("%Y-%m-%d") for day in pd.bdate_range("2024-01-02", periods=16)]
+    m1 = pd.concat([_day(day) for day in days[:-1]] + [_buffered_day(days[-1])])
+    config = _config(breakout_buffer_atr=0.05)
+    signals, counts = find_signals(m1, config)
+    assert counts["missing_atr"] > 0  # the first sessions have no completed-day ATR yet
+    last = signals[-1]
+    assert last.session_date == days[-1]
+    buffer = breakout_buffer(config, last.prior_atr)
+    assert 0 < buffer < 1 and 101.0 + buffer > 101.3
+    assert last.signal_open == last.range_start + timedelta(minutes=35)  # not the poke bar
+    assert last.signal_price == 102.0
+
+    trades, _ = backtest(m1, config)
+    trade = trades[trades.session_date == days[-1]].iloc[0]
+    assert trade.exit_reason == "target"
+    result = audit(trade, m1, config, prior_daily_atr(m1))
+    assert result["status"] == "passed"
+    assert result["breakout_buffer"] == round(buffer, 4)
+
+
 def test_same_m1_stop_and_target_is_a_loss():
     m1 = _day("2024-01-02", both_levels_on_entry=True)
     trades, _ = backtest(m1, _config())
