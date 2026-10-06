@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import math
 import threading
 import time
 from http.server import ThreadingHTTPServer
@@ -50,6 +51,126 @@ def test_history_and_drawdown_use_saved_closed_equity(tmp_path):
     assert app.drawdown_curve(listed[0]["id"]) == [0.0, 0.0, -2.0]
     with pytest.raises(ValueError, match="invalid run ID"):
         app.drawdown_curve("../outside")
+
+
+def test_trades_are_read_from_the_run_directory_with_display_columns_only(tmp_path):
+    app = ResearchWeb(root=tmp_path, config_path=CONFIG)
+    run = tmp_path / "outputs" / "runs" / "20240901T000000Z-abcdef"
+    run.mkdir(parents=True)
+    (run / "trades.csv").write_text(
+        "session_date,direction,entry,stop,take_profit,exit,exit_reason,R_result,PnL,"
+        "equity_after,MAE,MFE,position_size,ambiguous_m1,commission\n"
+        "2024-01-02,long,2050.5,2045.0,2061.5,2061.5,target,2.0,110.0,5110.0,0.1,1.0,0.05,False,1.2\n"
+        "2024-01-03,short,2060.0,2065.0,2050.0,2065.0,stop,-1.0,-55.0,5055.0,1.0,0.0,0.05,True,1.2\n",
+        encoding="utf-8")
+    trades = app.trades("20240901T000000Z-abcdef")
+    assert len(trades) == 2
+    assert trades[0]["direction"] == "long"
+    assert trades[0]["entry"] == 2050.5
+    assert trades[0]["ambiguous_m1"] is False
+    assert trades[1]["ambiguous_m1"] is True
+    assert "commission" not in trades[0], "the table only exposes the display columns"
+    assert app.trades("does-not-exist") == []
+    with pytest.raises(ValueError, match="invalid run ID"):
+        app.trades("../outside")
+
+
+def test_trades_http_endpoints_serve_json_rows_and_a_raw_csv_download(tmp_path):
+    app = ResearchWeb(root=tmp_path, config_path=CONFIG)
+    run = tmp_path / "outputs" / "runs" / "20240901T000000Z-abcdef"
+    run.mkdir(parents=True)
+    (run / "metrics.json").write_text(json.dumps({
+        "trades": 1, "expectancy_r": 2.0, "net_return_pct": 2.2, "max_drawdown_pct": 0.0,
+    }), encoding="utf-8")
+    (run / "trades.csv").write_text(
+        "session_date,direction,entry,stop,take_profit,exit,exit_reason,R_result,PnL,"
+        "equity_after,MAE,MFE,position_size,ambiguous_m1\n"
+        "2024-01-02,long,2050.5,2045.0,2061.5,2061.5,target,2.0,110.0,5110.0,0.1,1.0,0.05,False\n",
+        encoding="utf-8")
+    server = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(app))
+    server.daemon_threads = True
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    url = f"http://127.0.0.1:{server.server_port}"
+    try:
+        request = Request(f"{url}/api/runs/20240901T000000Z-abcdef/trades",
+                          headers={"Authorization": f"Bearer {app.key}"})
+        with urlopen(request, timeout=3) as response:
+            payload = json.load(response)
+        assert len(payload["trades"]) == 1
+        assert payload["trades"][0]["PnL"] == 110.0
+
+        request = Request(f"{url}/api/runs/20240901T000000Z-abcdef/trades.csv",
+                          headers={"Authorization": f"Bearer {app.key}"})
+        with urlopen(request, timeout=3) as response:
+            assert response.headers["Content-Disposition"] == \
+                'attachment; filename="20240901T000000Z-abcdef-trades.csv"'
+            body = response.read().decode("utf-8")
+        assert "2050.5" in body
+        assert "session_date" in body.splitlines()[0]
+
+        request = Request(f"{url}/api/runs/missing/trades",
+                          headers={"Authorization": f"Bearer {app.key}"})
+        with pytest.raises(HTTPError) as missing:
+            urlopen(request, timeout=3)
+        assert missing.value.code == 404
+
+        with pytest.raises(HTTPError) as unauthorized:
+            urlopen(f"{url}/api/runs/20240901T000000Z-abcdef/trades", timeout=3)
+        assert unauthorized.value.code == 401
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_monthly_stats_fill_trade_free_months_flat_like_report_metrics(tmp_path):
+    app = ResearchWeb(root=tmp_path, config_path=CONFIG)
+    run = tmp_path / "outputs" / "runs" / "20240901T000000Z-abcdef"
+    run.mkdir(parents=True)
+    (run / "parameters.json").write_text(json.dumps({"initial_equity": 5000}), encoding="utf-8")
+    # Two trades a month apart, then a gap month with no trade at all: the gap month
+    # must still count as a (flat, 0%) observation rather than being skipped.
+    (run / "trades.csv").write_text(
+        "exit_time,equity_after\n"
+        "2024-01-15 10:00:00+00:00,5100\n"
+        "2024-02-10 10:00:00+00:00,4900\n"
+        "2024-04-01 10:00:00+00:00,5150\n",
+        encoding="utf-8")
+    stats = app.monthly_stats("20240901T000000Z-abcdef")
+    assert stats["monthly_volatility_pct"] is not None
+    assert stats["sharpe_monthly_annualized"] is not None
+    # 4 monthly observations: Jan +2%, Feb ~-3.92%, Mar (no trade) 0%, Apr ~+5.10%.
+    returns = [5100 / 5000 - 1, 4900 / 5100 - 1, 0.0, 5150 / 4900 - 1]
+    mean = sum(returns) / len(returns)
+    variance = sum((r - mean) ** 2 for r in returns) / (len(returns) - 1)
+    expected_vol = math.sqrt(variance) * 100
+    assert stats["monthly_volatility_pct"] == pytest.approx(expected_vol, abs=1e-3)
+
+    assert app.monthly_stats("does-not-exist") == {
+        "monthly_volatility_pct": None, "sharpe_monthly_annualized": None,
+    }
+    with pytest.raises(ValueError, match="invalid run ID"):
+        app.monthly_stats("../outside")
+
+
+def test_get_run_merges_monthly_stats_only_when_asked(tmp_path):
+    app = ResearchWeb(root=tmp_path, config_path=CONFIG)
+    run = tmp_path / "outputs" / "runs" / "20240901T000000Z-abcdef"
+    run.mkdir(parents=True)
+    (run / "metrics.json").write_text(json.dumps({
+        "trades": 2, "expectancy_r": 0.1, "net_return_pct": 1.0, "max_drawdown_pct": 1.0,
+    }), encoding="utf-8")
+    (run / "trades.csv").write_text(
+        "exit_time,equity_after\n"
+        "2024-01-15 10:00:00+00:00,5100\n"
+        "2024-03-15 10:00:00+00:00,5250\n",
+        encoding="utf-8")
+    with_stats = app.get_run("20240901T000000Z-abcdef")
+    assert "monthly_volatility_pct" in with_stats["metrics"]
+    without_stats = app.get_run("20240901T000000Z-abcdef", monthly_stats=False)
+    assert "monthly_volatility_pct" not in without_stats["metrics"]
+    # history() must not pay for the trade-ledger read on every polled list refresh.
+    assert "monthly_volatility_pct" not in app.history()[0]["metrics"]
 
 
 def test_http_requires_key_and_rejects_holdout_override(tmp_path):
@@ -183,6 +304,83 @@ def test_failed_worker_stays_in_history_with_its_exit_code(tmp_path):
     assert record["finished_at"]
     assert any("boom" in line for line in record["recent_log"])
     assert app.active_id is None
+
+
+WALK_WORKER = '''import argparse, json, sys
+from pathlib import Path
+parser = argparse.ArgumentParser()
+parser.add_argument("command")
+parser.add_argument("--config", required=True)
+parser.add_argument("--output-dir", required=True)
+args = parser.parse_args()
+assert args.command == "walk-forward"
+out = Path(args.output_dir)
+out.mkdir(parents=True, exist_ok=False)
+out.joinpath("argv.json").write_text(json.dumps(sys.argv[1:]), encoding="utf-8")
+print("Loaded 2,454,505 M1 bars; latest 2024-12-31", flush=True)
+print("Fold 1/4: training 2018-2020", flush=True)
+print("  train buffer 0.25: 498 trades, mean R +0.0438", flush=True)
+print("  selected 0.25 from training only; testing 2021", flush=True)
+print("  unseen 2021: 1 trades, mean R +0.5000, return +0.25%", flush=True)
+for year in (2022, 2023, 2024):
+    print(f"Fold {year-2020}/4: training {year-3}-{year-1}", flush=True)
+    print(f"  unseen {year}: 1 trades, mean R +0.5000, return +0.25%", flush=True)
+out.joinpath("spec.json").write_text(json.dumps({"base_config": {"initial_equity": 5000},
+  "holdout_used": False, "holdout_start": "2025-01-01"}), encoding="utf-8")
+out.joinpath("summary.json").write_text(json.dumps({"trades": 4, "mean_r": 0.5,
+  "return_pct": 1.0, "max_closed_dd_pct": 0.4, "win_rate": 0.75,
+  "profit_factor": 1.2, "secret_internal_field": "private"}), encoding="utf-8")
+out.joinpath("folds.csv").write_text(
+  "train_start,train_end_inclusive,test_year,selected_buffer,selected_train_mean_r,trades,mean_r,return_pct,max_closed_dd_pct\\n"
+  "2018,2020,2021,0.25,0.04,1,0.5,0.25,0.4\\n"
+  "2019,2021,2022,0.35,0.05,1,0.5,0.25,0.4\\n"
+  "2020,2022,2023,0.45,0.06,1,0.5,0.25,0.4\\n"
+  "2021,2023,2024,0.55,0.07,1,0.5,0.25,0.4\\n", encoding="utf-8")
+out.joinpath("oos_trades.csv").write_text(
+  "equity_after\\n5100\\n5079.6\\n5120\\n5150\\n", encoding="utf-8")
+'''
+
+
+def test_walk_forward_web_run_uses_fixed_plan_and_shows_folds(tmp_path):
+    (tmp_path / "run_all.py").write_text(WALK_WORKER, encoding="utf-8")
+    app = ResearchWeb(root=tmp_path, config_path=CONFIG)
+    accepted = app.submit_walk_forward()
+    assert accepted["kind"] == "walk_forward" and accepted["parameters"] == {}
+    finished = wait_for(app, accepted["id"])
+    assert finished["state"] == "complete" and finished["progress"] == 100
+    assert finished["metrics"]["expectancy_r"] == 0.5
+    assert "secret_internal_field" not in finished["metrics"]
+    assert [int(fold["test_year"]) for fold in finished["folds"]] == [2021, 2022, 2023, 2024]
+    assert app.drawdown_curve(accepted["id"], "walk_forward") == [0.0, 0.0, -0.4, 0.0, 0.0]
+    argv = json.loads((tmp_path / "outputs" / "walk_forward" / accepted["id"] / "argv.json")
+                      .read_text(encoding="utf-8"))
+    assert argv[0] == "walk-forward" and "--config" in argv
+    assert "--cached-only" not in argv
+    assert app.history()[0]["kind"] == "walk_forward"
+    # Existing folders remain selectable after the dashboard restarts.
+    restarted = ResearchWeb(root=tmp_path, config_path=CONFIG)
+    assert restarted.get_run(accepted["id"])["folds"] == finished["folds"]
+
+
+def test_walk_forward_endpoint_rejects_parameter_override(tmp_path):
+    app = ResearchWeb(root=tmp_path, config_path=CONFIG)
+    server = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(app))
+    server.daemon_threads = True
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        body = json.dumps({"parameters": {"holdout_start": "2026-01-01"}}).encode()
+        request = Request(f"http://127.0.0.1:{server.server_port}/api/walk-forward",
+                          data=body, method="POST",
+                          headers={"Authorization": f"Bearer {app.key}",
+                                   "Content-Type": "application/json"})
+        with pytest.raises(HTTPError) as invalid:
+            urlopen(request, timeout=3)
+        assert invalid.value.code == 400
+        assert "fixed plan" in invalid.value.read().decode()
+    finally:
+        server.shutdown()
+        server.server_close()
 
 
 def test_a_restart_marks_an_abandoned_run_interrupted(tmp_path):
