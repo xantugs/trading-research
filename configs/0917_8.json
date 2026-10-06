@@ -1,0 +1,44 @@
+{
+  "symbol": "XAUUSD",
+  "expected_server": "FTMO-Demo",
+  "source": "mt5",
+
+  "cache_dir": "C:/data/ftmo_xauusd_m1",
+  "tick_cache_dir": "C:/data/ftmo_xauusd_ticks",
+  "output_dir": "outputs/xauusd_0820_60m_2R_control_widestop",
+
+  "start": "2018-01-01",
+  "tick_start": "2021-10-04",
+
+  "development_end": "2025-01-01",
+  "holdout_start": "2025-01-01",
+
+  "session_name": "new_york_0820",
+  "session_timezone": "America/New_York",
+  "session_open": "08:20",
+  "session_exit": "16:00",
+
+  "range_minutes": 60,
+  "signal_minutes": 5,
+
+  "breakout_buffer_atr": 0.0,
+
+  "risk_percent": 0.5,
+  "reward_risk": 2.0,
+
+  "stop_method": "range_multiple",
+  "stop_width_multiple": 1.2,
+
+  "initial_equity": 5000,
+
+  "commission_per_lot_side": 0,
+  "commission_rate_pct_side": 0.0005,
+
+  "slippage_price": 0.02,
+  "spread_multiplier": 1,
+  "fallback_spread_price": 0.20,
+
+  "same_bar_rule": "sl_first",
+
+  "random_seed": 20260917
+}

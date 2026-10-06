@@ -1,0 +1,40 @@
+{
+  "purpose": "Immutable summary references for the original $5k development-period walk-forwards",
+  "holdout_used": false,
+  "strategy_a": {
+    "broker_clock": "stored_as_utc",
+    "trades": 371,
+    "mean_r": 0.02476699494929945,
+    "profit_factor": 1.1490020926774265,
+    "return_pct": 3.8174902860006688,
+    "max_closed_dd_pct": 3.0035347535777746,
+    "frozen_filter_trades": 158,
+    "frozen_filter_mean_r": 0.08087041580747684
+  },
+  "strategy_b": {
+    "base_1600_fixed": {
+      "trades": 381,
+      "mean_r": 0.0204892070602993,
+      "profit_factor": 1.0876268313655388,
+      "return_pct": 2.3830392300007386,
+      "max_closed_dd_pct": 2.6905633932818307,
+      "long_expectancy_r": 0.04644250689826594,
+      "short_expectancy_r": -0.005328211626683039,
+      "profitable_years": 2,
+      "buffers": [0.25, 0.25, 0.25, 0.55],
+      "below_min_lot_skips": [12, 9, 9, 31]
+    },
+    "both_1600_fixed": {
+      "trades": 249,
+      "mean_r": 0.0037634753763193,
+      "profit_factor": 1.0095248439140398,
+      "return_pct": 0.18294508600043,
+      "max_closed_dd_pct": 2.192675743606365,
+      "long_expectancy_r": 0.01082482654667946,
+      "short_expectancy_r": -0.0027003768488563793,
+      "profitable_years": 2,
+      "buffers": [0.25, 0.25, 0.25, 0.55],
+      "below_min_lot_skips": [9, 7, 6, 19]
+    }
+  }
+}

@@ -4,8 +4,14 @@ Snapshot verified on 17 September 2026. The active MT5 account reported
 `FTMO Global Markets Ltd / FTMO-Demo`; the exact symbol was `XAUUSD`, a USD
 spot CFD with a 100 oz contract, 0.01 price point and 0.01-lot minimum/step.
 The downloader rejects a different server or symbol specification. MT5 Python
-timestamps are interpreted as UTC; the broker's chart clock is not used as a
-fixed session-time offset.
+timestamps are stored as delivered and labelled UTC. **They are not UTC**: the
+values carry the FTMO-Demo server clock, which runs at New York + 7 h in every
+season (every 08:30 New York release prints at 15:30 in the stored clock; see
+`docs/RESEARCH_V2.md`, "Broker clock", and `scripts/verify_broker_clock.py`).
+The `broker_clock` configuration key controls decoding at load time; the
+default `stored_as_utc` preserves the historical interpretation used by every
+result before 18 September 2026, and `new_york_plus_7` decodes the true time.
+The "UTC coverage" bounds in the table below are stored-clock bounds.
 
 | Layer | UTC coverage | Records | Local storage |
 | --- | --- | ---: | ---: |
