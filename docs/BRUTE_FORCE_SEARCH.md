@@ -77,7 +77,7 @@ or (c).
 | Spearman, training vs test mean R | −0.146 | +0.231 | +0.249 |
 | Best training combination: train → test mean R | +0.119 → −0.011 | +0.221 → −0.038 | +0.116 → −0.040 |
 | Deflated Sharpe ratio of that combination | 0.004 | 0.011 | 0.002 |
-| Median test mean R of the top 10 | −0.011 | +0.018 | −0.003 |
+| Median test mean R of the top 10 | −0.011 | +0.034 | −0.027 |
 | (a) best test > 0, t ≥ 2 / (b) top-10 median > 0 / (c) DSR ≥ 0.95 / (d) Spearman > 0.1 | ✗ ✗ ✗ ✗ | ✗ ✓ ✗ ✓ | ✗ ✗ ✗ ✓ |
 
 Test mean R by training-rank decile (worst to best):
