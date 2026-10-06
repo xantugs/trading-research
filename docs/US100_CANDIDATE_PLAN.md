@@ -57,3 +57,37 @@ of breaching any loss limit before passing is no more than 25%.
 Known understatement: these replays book each trade's P/L on its exit day. FTMO counts
 open losses against the daily limit too, so positions held overnight make real daily
 breaches more likely than modelled.
+
+## Results (7 October 2026)
+
+`python -m scripts.us100_candidate_checks`, run once after the plan above was committed
+(`3c402e3`). The candidate cell in the grid reproduced the candidate exactly: 1,390 trades,
+mean +0.081R, 43.5% wins.
+
+| # | Result | Bar | Verdict |
+|---|---|---|---|
+| C1 | Mean R by year: 2022 +0.116, 2023 +0.072, 2024 +0.102, 2025 +0.150, 2026 −0.043 (213 trades to 6 Oct). Largest year (2025) is 36% of net R | ≥ 3 of 5 positive; no year > 60% | **Pass** (4 of 5) |
+| C2 | Longs 735 trades, +0.086R; shorts 655, +0.076R | Reported only | Both sides positive |
+| C3 | All 27 cells positive (lowest +0.026R, 5 min / 1.25R). Median +0.052R against the candidate's +0.081R. The 15-minute range is the best row at every target and cutoff | ≥ 19 of 27; median ≥ half | **Pass** (27 of 27) |
+| C4 | Spread and slippage ×2: +0.068R. 10% financing: +0.049R. Both: +0.035R | > 0 combined | **Pass** |
+| C5 | The training years chose 15 min / 2.0R / 12:00 for 2023, then 15 min / 2.0R / 13:00. Test years: 2023 +0.090, 2024 +0.137, 2025 +0.125, 2026 −0.054. Pooled +0.082R | Pooled > 0; ≥ 3 of 4 years | **Pass** (3 of 4) |
+
+**The candidate passes robustness.** Costs take more than half of the edge under stress,
+and 2026 is negative in both C1 and C5, so the most recent year does not support it.
+
+FTMO 2-step sizing (Monte Carlo, 10,000 day-block paths; historical replay from 969
+start dates in brackets):
+
+| Risk per trade | Pass both phases | Breach before passing | Median days to pass |
+|---|---:|---:|---:|
+| 0.25% | 97.9% (63% of starts, 37% unfinished) | 2.1% | ~835 (709) |
+| **0.5%** | **83.5% (80%)** | **16.5%** | **~340 (305)** |
+| 0.75% | 70.1% (75%) | 29.9% | ~181 (171) |
+| 1.0% | 61.8% (62%) | 38.2% | ~111 (104) |
+| 1.5% | 50.9% (57%) | 49.1% | ~57 (55) |
+| 2.0% | 38.8% (40%) | 61.2% | ~36 (32) |
+
+Breaches come from the 10% total-loss limit; the daily limit only bites at 2%. By the
+pre-declared rule (breach ≤ 25%), **the forward test runs at 0.5% risk**, at which a pass
+takes about a year on this trade rate. The understatement noted above applies: FTMO
+counts open losses on overnight positions against the daily limit.
