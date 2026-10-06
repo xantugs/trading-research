@@ -12,6 +12,21 @@ import pandas as pd
 from orb_research.config import load_config
 
 
+def to_stored_clock(stamp: pd.Timestamp, config) -> pd.Timestamp:
+    """Map a decoded UTC time onto the cache's stored clock (tick files are dated in it)."""
+    if config.broker_clock == "stored_as_utc":
+        return stamp
+    return (stamp.tz_convert("America/New_York").tz_localize(None)
+            + pd.Timedelta(hours=7)).tz_localize("UTC")
+
+
+def from_stored_clock(stamp: pd.Timestamp, config) -> pd.Timestamp:
+    if config.broker_clock == "stored_as_utc":
+        return stamp
+    return ((stamp.tz_localize(None) - pd.Timedelta(hours=7))
+            .tz_localize("America/New_York").tz_convert("UTC"))
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", default="configs/xauusd_orb_research.json")
@@ -27,8 +42,13 @@ def main() -> None:
     selected = selected.drop_duplicates(subset=["session_date", "direction"])
     rows = []
     for trade in selected.itertuples(index=False):
-        entry = pd.Timestamp(trade.timestamp)
+        entry = to_stored_clock(pd.Timestamp(trade.timestamp), config)
         day = entry.strftime("%Y-%m-%d")
+        if config.trail_atr_multiple is not None:
+            # take_profit is the trailing activation level, not an exit; a moving stop has no
+            # fixed first-touch order to compare.
+            rows.append({"date": day, "status": "trailing_stop_not_compared"})
+            continue
         file = (Path(config.tick_cache_dir) / config.expected_server / config.symbol
                 / entry.strftime("%Y") / entry.strftime("%m") / f"{day}.parquet")
         if not file.exists():
@@ -36,13 +56,18 @@ def main() -> None:
             continue
         ticks = pd.read_parquet(file, columns=["time_msc", "bid", "ask"])
         entry_msc = entry.value // 1_000_000
-        exit_hour, exit_minute = map(int, config.session_exit.split(":"))
-        exit_ny = (entry.tz_convert(config.session_timezone).normalize()
-                   + pd.Timedelta(hours=exit_hour, minutes=exit_minute))
-        if exit_ny.tz_convert("UTC").date() != entry.date():
+        if config.position_exit == "stop_or_target":
+            # Held positions have no time exit: search up to the end of the recorded exit minute.
+            window_end = pd.Timestamp(trade.exit_time) + pd.Timedelta(minutes=1)
+        else:
+            exit_hour, exit_minute = map(int, config.session_exit.split(":"))
+            window_end = (pd.Timestamp(trade.timestamp).tz_convert(config.session_timezone).normalize()
+                          + pd.Timedelta(hours=exit_hour, minutes=exit_minute)).tz_convert("UTC")
+        window_end = to_stored_clock(window_end, config)
+        if window_end.date() != entry.date():
             rows.append({"date": day, "status": "cross_utc_day_not_compared"})
             continue
-        exit_msc = exit_ny.tz_convert("UTC").value // 1_000_000
+        exit_msc = window_end.value // 1_000_000
         ticks = ticks[(ticks.time_msc >= entry_msc) & (ticks.time_msc < exit_msc)]
         if ticks.empty:
             rows.append({"date": day, "status": "session_ticks_missing"})
@@ -60,6 +85,7 @@ def main() -> None:
             touch_utc = pd.Timestamp(int(ticks.iloc[first].time_msc), unit="ms", tz="UTC")
         else:
             tick_exit, touch_utc = "time", pd.Timestamp(exit_msc, unit="ms", tz="UTC")
+        touch_utc = from_stored_clock(touch_utc, config)
         m1_exit = str(trade.exit_reason).split("_")[0]
         gaps = np.diff(ticks.time_msc.to_numpy())
         rows.append({

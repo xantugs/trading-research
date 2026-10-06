@@ -34,8 +34,8 @@ def _coverage(frame: pd.DataFrame, start: pd.Timestamp, end: pd.Timestamp) -> di
                   if day.weekday() < 5 and count < 1000}
     return {
         "rows": int(len(frame)),
-        "first_utc": frame.index[0].isoformat(),
-        "last_utc": frame.index[-1].isoformat(),
+        "first_utc": frame.index[0].isoformat() if len(frame) else None,
+        "last_utc": frame.index[-1].isoformat() if len(frame) else None,
         "observed_days": int(len(daily_counts)),
         "expected_weekdays": int(len(expected_weekdays)),
         "missing_weekdays": missing_weekdays,
@@ -59,6 +59,9 @@ def parse_args(argv=None):
                         help="Exclusive UTC end date (default: today, so current day is omitted)")
     parser.add_argument("--terminal-path", help="Path to the intended terminal64.exe")
     parser.add_argument("--refresh", action="store_true", help="Re-fetch even verified cached months")
+    parser.add_argument("--accept-gap", action="append", default=[], metavar="YYYY-MM",
+                        help="Accept this month despite missing weekdays (a known broker gap); "
+                             "the missing days are recorded in its manifest entry")
     return parser.parse_args(argv)
 
 
@@ -116,12 +119,16 @@ def main(argv=None) -> int:
                     raise RuntimeError(f"M1 request failed for {left:%Y-%m}: {mt5.last_error()}")
                 frame = _from_mt5_array(rates)
                 frame = frame.loc[(frame.index >= request_start) & (frame.index < request_end)]
-                validate_m1_bars(frame)
+                accepted = f"{left:%Y-%m}" in args.accept_gap
+                if not (frame.empty and accepted):  # an accepted gap may be a whole empty month
+                    validate_m1_bars(frame)
                 coverage = _coverage(frame, request_start, request_end)
-                if (coverage["expected_weekdays"] >= 5 and
-                        len(coverage["missing_weekdays"]) / coverage["expected_weekdays"] > 0.2):
+                short = (coverage["expected_weekdays"] >= 5 and
+                         len(coverage["missing_weekdays"]) / coverage["expected_weekdays"] > 0.2)
+                if short and not accepted:
                     raise RuntimeError(f"{left:%Y-%m} has too many missing weekdays: "
-                                       f"{coverage['missing_weekdays']}")
+                                       f"{coverage['missing_weekdays']} (pass --accept-gap "
+                                       f"{left:%Y-%m} if this is a known broker gap)")
                 record = {
                     "file": target.name,
                     "request_start_utc": request_start.isoformat(),
@@ -130,6 +137,10 @@ def main(argv=None) -> int:
                     else "development",
                     **coverage,
                 }
+                if short:
+                    record["accepted_gap"] = True
+                    print(f"Accepted broker gap in {left:%Y-%m}: {len(coverage['missing_weekdays'])} "
+                          "weekdays without bars", flush=True)
                 partial = target.with_suffix(".parquet.partial")
                 frame.to_parquet(partial)
                 partial.replace(target)

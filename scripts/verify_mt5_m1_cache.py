@@ -45,14 +45,18 @@ def main(argv=None) -> int:
             sidecar = json.loads(path.with_suffix(".json").read_text(encoding="utf-8"))
             if sidecar != record:
                 raise ValueError(f"sidecar/manifest mismatch: {path.name}")
-            frame = validate_m1_bars(pd.read_parquet(path))
+            frame = pd.read_parquet(path)
+            # A month recorded as an accepted broker gap may hold no bars at all.
+            empty_gap = frame.empty and record.get("accepted_gap") is True
+            if not empty_gap:
+                validate_m1_bars(frame)
             start = pd.Timestamp(record["request_start_utc"])
             end = pd.Timestamp(record["request_end_exclusive_utc"])
             if not left <= start < end <= right:
                 raise ValueError(f"bad request bounds: {path.name}")
-            if frame.index[0] < start or frame.index[-1] >= end:
+            if not empty_gap and (frame.index[0] < start or frame.index[-1] >= end):
                 raise ValueError(f"out-of-bounds bars: {path.name}")
-            if previous_last is not None and previous_last >= frame.index[0]:
+            if not empty_gap and previous_last is not None and previous_last >= frame.index[0]:
                 raise ValueError(f"overlapping months: {path.name}")
             calculated = _coverage(frame, start, end)
             if any(calculated[key] != record[key] for key in calculated):
@@ -61,12 +65,14 @@ def main(argv=None) -> int:
                                   else "development")
             if record["partition"] != expected_partition:
                 raise ValueError(f"holdout label mismatch: {path.name}")
+            total_bytes += path.stat().st_size
+            missing_weekdays.extend(calculated["missing_weekdays"])
+            if empty_gap:
+                continue
             first = first or frame.index[0]
             last = previous_last = frame.index[-1]
             total_rows += len(frame)
-            total_bytes += path.stat().st_size
             zero_spread += calculated["zero_spread_bars"]
-            missing_weekdays.extend(calculated["missing_weekdays"])
             if calculated["zero_spread_bars"] / len(frame) > 0.05:
                 high_zero_spread_months.append({
                     "month": f"{left:%Y-%m}",

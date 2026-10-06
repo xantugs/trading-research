@@ -48,6 +48,35 @@ def validate_m1_bars(frame: pd.DataFrame) -> pd.DataFrame:
     return frame
 
 
+def decode_broker_clock(frame: pd.DataFrame, config: Config) -> pd.DataFrame:
+    """Re-label cached bar timestamps according to the configured broker clock.
+
+    MT5's Python API returns bar times as epoch seconds that carry the *server*
+    clock; the cache stores them labelled as UTC.  For FTMO-Demo XAUUSD every
+    08:30 New York release prints at 15:30 in that stored clock in winter and
+    summer alike, so the server runs at New York + 7 h year-round.  Decoding
+    subtracts seven hours and localises the result as America/New_York.  The
+    default keeps the historical stored-as-UTC interpretation unchanged.
+    """
+    if config.broker_clock == "stored_as_utc" or frame.empty:
+        return frame
+    # Trading is closed during the Sunday DST transitions. If this ever changes,
+    # fail rather than silently guessing or shifting a market-data timestamp.
+    if config.broker_clock == "eastern_european":
+        # MOTCapital-Live-1: UTC+2 in winter, UTC+3 in summer, switching on the EU dates.
+        # The 09:30 New York open prints at 16:30 server time except in the weeks when
+        # only one of the US and EU has changed clocks (March: 15:30).
+        decoded = frame.index.tz_convert(None).tz_localize(
+            "Europe/Athens", ambiguous="raise", nonexistent="raise").tz_convert("UTC")
+    else:
+        stored = frame.index.tz_convert(None) - pd.Timedelta(hours=7)
+        decoded = stored.tz_localize("America/New_York", ambiguous="raise",
+                                     nonexistent="raise").tz_convert("UTC")
+    out = frame.copy()
+    out.index = pd.DatetimeIndex(decoded, name=frame.index.name)
+    return out.sort_index()
+
+
 def validate_m1(frame: pd.DataFrame, config: Config) -> pd.DataFrame:
     validate_m1_bars(frame)
     start = pd.Timestamp(config.start, tz="UTC")
@@ -98,7 +127,7 @@ def _inspect_terminal(mt5, config: Config) -> dict:
             f"{config.min_lot}/{config.lot_step}/{config.max_lot}"
         )
     if info.chart_mode != mt5.SYMBOL_CHART_MODE_BID:
-        raise RuntimeError("research engine requires Bid-based XAUUSD bars; broker chart mode is Last")
+        raise RuntimeError(f"research engine requires Bid-based {config.symbol} bars; broker chart mode is Last")
     if account.currency != "USD" or info.currency_profit != "USD":
         raise RuntimeError("research sizing requires a USD account and USD symbol P/L")
     expected_tick_value = info.trade_tick_size * info.trade_contract_size
@@ -114,7 +143,7 @@ def _inspect_terminal(mt5, config: Config) -> dict:
         "volume_min": info.volume_min, "volume_step": info.volume_step,
         "volume_max": info.volume_max, "terminal_path": terminal.path,
         "chart_mode": "bid",
-        "clock": "UTC per MetaTrader5 Python rates timestamp contract",
+        "clock": "MT5 epoch seconds as delivered (server clock, labelled UTC; see broker_clock)",
     }
 
 
@@ -128,7 +157,7 @@ def load_m1(config: Config, *, refresh: bool = False, terminal_path: str | None 
                 provenance.get("symbol") != config.symbol or
                 provenance.get("chart_mode") != "bid"):
             raise ValueError("Parquet provenance does not match configured server and symbol")
-        return validate_m1(frame, config), provenance
+        return validate_m1(decode_broker_clock(frame, config), config), provenance
 
     cache = Path(config.cache_dir) / config.expected_server / config.symbol
     cache.mkdir(parents=True, exist_ok=True)
@@ -183,6 +212,8 @@ def load_m1(config: Config, *, refresh: bool = False, terminal_path: str | None 
             provenance.get("chart_mode") != "bid"):
         raise ValueError("cached source identity changed")
     frames = [pd.read_parquet(cache / f"{left:%Y%m}.parquet") for left, _ in months]
+    # A recorded broker-gap month is an empty, untyped file; it adds no bars.
+    frames = [frame for frame in frames if not frame.empty]
     frame = pd.concat(frames).sort_index()
     frame = frame.loc[~frame.index.duplicated(keep="first")]
-    return validate_m1(frame, config), provenance
+    return validate_m1(decode_broker_clock(frame, config), config), provenance

@@ -7,7 +7,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from .config import Config, serialise
+from .config import Config, holdout_note, serialise
 
 
 def _max_run(values: pd.Series, positive: bool) -> int:
@@ -154,7 +154,7 @@ def write_baseline(trades: pd.DataFrame, diagnostics: dict, provenance: dict, co
 
 Data source: `{provenance.get('company', 'unknown')}` / `{provenance.get('server', 'unknown')}` /
 `{provenance.get('symbol', 'unknown')}`. Period: {config.start} to {config.development_end}
-(exclusive). Data from {config.holdout_start} onward remains untouched.
+(exclusive). {holdout_note(config)}.
 
 | Metric | Result |
 | --- | ---: |
@@ -195,7 +195,7 @@ Data source: `{provenance.get('company', 'unknown')}` / `{provenance.get('server
 - Drawdown is measured at closed trades, not intratrade equity or a firm's
   daily-limit reset. This report is not a prop-firm pass estimate.
 - This is one baseline configuration, not evidence of a robust edge. Do not
-  tune against the final holdout.
+  tune against data you will later call out-of-sample.
 """
     path = out / "summary_report.md"
     path.write_text(report, encoding="utf-8")

@@ -11,7 +11,7 @@ import pandas as pd
 
 from orb_research.config import load_config
 from orb_research.data_loader import load_m1
-from orb_research.strategy import breakout_buffer, prior_daily_atr
+from orb_research.strategy import breakout_buffer, prior_daily_atr, signal_bars
 
 
 def audit(trade: pd.Series, bars: pd.DataFrame, config, atr: pd.Series) -> dict:
@@ -31,22 +31,72 @@ def audit(trade: pd.Series, bars: pd.DataFrame, config, atr: pd.Series) -> dict:
     upper_trigger = trade.range_high + buffer
     lower_trigger = trade.range_low - buffer
 
-    previous = bars.loc[(bars.index >= end) & (bars.index < signal_open)]
-    for _, group in previous.resample(f"{config.signal_minutes}min", label="left", closed="left"):
-        if len(group) == config.signal_minutes:
-            assert lower_trigger <= group.close.iloc[-1] <= upper_trigger
+    stop_order = config.entry_mode == "stop_order"
+    trailing = config.trail_atr_multiple is not None
+    opposite_closed = config.trades_per_session == "one" and config.trade_direction == "both"
+    first = bars.loc[entry_time]
+    recorded = float(first.spread) * config.point
+    spread = (recorded if recorded > 0 else config.fallback_spread_price) * config.spread_multiplier
+    if stop_order:
+        # The fill minute is the first since the range ended whose ask high (long) or bid low
+        # (short) reached the order; earlier minutes did not (in either direction under "one").
+        assert entry_time == signal_open
+        level = upper_trigger if trade.direction == "long" else lower_trigger
+        assert trade.signal_price == level
+        before = bars.loc[(bars.index >= end) & (bars.index < entry_time)]
+        raw = before.spread.to_numpy(dtype=float) * config.point
+        asks_high = before.high.to_numpy() + np.where(raw > 0, raw, config.fallback_spread_price) \
+            * config.spread_multiplier
+        if trade.direction == "long" or opposite_closed:
+            assert (asks_high < upper_trigger).all()
+        if trade.direction == "short" or opposite_closed:
+            assert (before.low.to_numpy() > lower_trigger).all()
+        assert (float(first.high) + spread >= level if trade.direction == "long"
+                else float(first.low) <= level)
+        expected_entry = (max(float(first.open) + spread, level) + config.slippage_price
+                          if trade.direction == "long"
+                          else min(float(first.open), level) - config.slippage_price)
+    else:
+        _audit_close_signal(trade, bars, config, end, signal_open, entry_time, upper_trigger,
+                            lower_trigger, opposite_closed)
+        expected_entry = (float(first.open) + spread + config.slippage_price
+                          if trade.direction == "long"
+                          else float(first.open) - config.slippage_price)
+    assert abs(trade.entry - expected_entry) < 1e-7
+    _audit_exit(trade, bars, config, prior_atr, entry_time, exit_time, stop_order, trailing)
+    return {"date": trade.session_date, "direction": trade.direction,
+            "signal_utc": str(entry_time), "exit_utc": str(exit_time),
+            "exit_reason": trade.exit_reason, "net_R": round(float(trade.R_result), 4),
+            "breakout_buffer": round(buffer, 4), "status": "passed"}
+
+
+def _audit_close_signal(trade, bars, config, end, signal_open, entry_time, upper_trigger,
+                        lower_trigger, opposite_closed) -> None:
+    # Earlier complete entry bars must not have broken out in this trade's direction; under
+    # one trade per session with both directions allowed, not in the other direction either.
+    # after_close re-entries follow earlier trades of the same session, so only the
+    # freshness of their own breakout (previous entry bar inside) is checked.
+    first_bar = end - pd.Timedelta(minutes=config.signal_minutes - 1)
+    window = bars.loc[(bars.index >= first_bar.floor(f"{config.signal_minutes}min"))
+                      & (bars.index < signal_open)]
+    earlier = signal_bars(window, config.signal_minutes) if not window.empty else window
+    earlier = earlier.loc[(earlier.index >= first_bar)
+                          & (earlier.minutes_present == config.signal_minutes)]
+    if config.trades_per_session == "after_close":
+        earlier = earlier.tail(1)
+    for close in earlier.close:
+        if trade.direction == "long" or opposite_closed:
+            assert close <= upper_trigger
+        if trade.direction == "short" or opposite_closed:
+            assert close >= lower_trigger
     signal = bars.loc[(bars.index >= signal_open) & (bars.index < entry_time)]
     assert len(signal) == config.signal_minutes
     assert trade.signal_price == signal.close.iloc[-1]
     assert ((trade.signal_price > upper_trigger) if trade.direction == "long"
             else (trade.signal_price < lower_trigger))
 
-    first = bars.loc[entry_time]
-    recorded = float(first.spread) * config.point
-    spread = (recorded if recorded > 0 else config.fallback_spread_price) * config.spread_multiplier
-    expected_entry = (float(first.open) + spread + config.slippage_price if trade.direction == "long"
-                      else float(first.open) - config.slippage_price)
-    assert abs(trade.entry - expected_entry) < 1e-7
+
+def _audit_exit(trade, bars, config, prior_atr, entry_time, exit_time, stop_order, trailing) -> None:
     if config.stop_method == "opposite_range":
         assert trade.stop == (trade.range_low if trade.direction == "long" else trade.range_high)
     elif config.stop_method == "range_multiple":
@@ -59,12 +109,19 @@ def audit(trade: pd.Series, bars: pd.DataFrame, config, atr: pd.Series) -> dict:
         sign = 1 if trade.direction == "long" else -1
         expected_stop = trade.entry - sign * prior_atr * config.atr_stop_multiple
         assert abs(trade.stop - expected_stop) < 1e-7
-    expected_target = trade.entry + (trade.entry - trade.stop) * config.reward_risk
+    # With a trailing stop, take_profit records the activation level, not an exit.
+    expected_target = trade.entry + (trade.entry - trade.stop) * (
+        config.trail_activation_r if trailing else config.reward_risk)
     assert abs(trade.take_profit - expected_target) < 1e-7
     assert trade.exit_time >= trade.timestamp
     assert exit_time in bars.index
 
-    prior_path = bars.loc[(bars.index >= entry_time) & (bars.index < exit_time)]
+    # A trailing stop moves, so only its exit bar is checked; a stop-order fill minute can only
+    # stop out, so it is excluded from the no-touch path.
+    first_path = entry_time + pd.Timedelta(minutes=1) if stop_order else entry_time
+    prior_path = bars.loc[(bars.index >= first_path) & (bars.index < exit_time)]
+    if trailing:
+        prior_path = prior_path.iloc[:0]
     for _, bar in prior_path.iterrows():
         bar_spread_raw = float(bar.spread) * config.point
         bar_spread = (bar_spread_raw if bar_spread_raw > 0
@@ -88,7 +145,14 @@ def audit(trade: pd.Series, bars: pd.DataFrame, config, atr: pd.Series) -> dict:
                    else exit_bar.low + exit_spread <= trade.take_profit)
         assert touched
     elif trade.exit_reason == "time":
-        assert exit_time.tz_convert(config.session_timezone).strftime("%H:%M") == config.session_exit
+        flat = config.flat_time or config.session_exit
+        assert exit_time.tz_convert(config.session_timezone).strftime("%H:%M") >= flat
+    elif trade.exit_reason in ("trail_stop", "trail_stop_gap"):
+        assert trailing
+        if trade.exit_reason == "trail_stop":  # filled at a stop tighter than the initial one
+            moved = (trade.exit + config.slippage_price if trade.direction == "long"
+                     else trade.exit - config.slippage_price)
+            assert (moved > trade.stop if trade.direction == "long" else moved < trade.stop)
     elif trade.exit_reason.endswith("_gap"):
         assert (exit_bar.open <= trade.stop if trade.direction == "long" else
                 exit_bar.open + exit_spread >= trade.stop) if trade.exit_reason == "stop_gap" else (
@@ -96,10 +160,6 @@ def audit(trade: pd.Series, bars: pd.DataFrame, config, atr: pd.Series) -> dict:
                 exit_bar.open + exit_spread <= trade.take_profit)
     else:
         raise AssertionError(f"unknown exit reason: {trade.exit_reason}")
-    return {"date": trade.session_date, "direction": trade.direction,
-            "signal_utc": str(entry_time), "exit_utc": str(exit_time),
-            "exit_reason": trade.exit_reason, "net_R": round(float(trade.R_result), 4),
-            "breakout_buffer": round(buffer, 4), "status": "passed"}
 
 
 def main() -> None:

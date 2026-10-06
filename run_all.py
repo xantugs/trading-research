@@ -60,6 +60,122 @@ def run_web(argv: list[str]) -> int:
     return 0
 
 
+def run_walk_forward(argv: list[str]) -> int:
+    """Run the prespecified buffer-selection protocol on cached development data."""
+    python = ensure_research_python()
+    command([python, "-m", "orb_research.walk_forward_cli", *argv])
+    return 0
+
+
+def run_verify_clock(argv: list[str]) -> int:
+    """Require release, weekly-boundary and DST evidence before corrected-clock research."""
+    python = ensure_research_python()
+    command([python, "-m", "scripts.verify_broker_clock", *argv])
+    return 0
+
+
+def run_strategy_b(argv: list[str]) -> int:
+    """Run the frozen true-08:20-NY comparison on the sealed development period."""
+    parser = argparse.ArgumentParser(prog="python run_all.py strategy-b")
+    parser.add_argument("--config", type=Path, default=Path("configs/strategy_b_0820.json"))
+    parser.add_argument("--output-dir", type=Path)
+    parser.add_argument("--research-sizing", action="store_true",
+                        help="rerun at $100k simulated equity to remove minimum-lot sample censoring")
+    args = parser.parse_args(argv)
+    config_path = _config_path(args.config)
+    raw = json.loads(config_path.read_text(encoding="utf-8"))
+    if (raw.get("broker_clock") != "new_york_plus_7" or
+            raw.get("development_end") != "2025-01-01" or
+            raw.get("holdout_start") != "2025-01-01"):
+        raise ValueError("Strategy B requires corrected FTMO clock and sealed 2025 holdout")
+    python = ensure_research_python()
+    if args.research_sizing:
+        output = _config_path(args.output_dir or Path("outputs/strategy_b_research_sizing"))
+        stamp = f"{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}-{uuid4().hex[:6]}"
+        research_b = output / stamp
+        research_a = ROOT / "outputs" / "strategy_a_research_sizing" / stamp
+        command([python, "-m", "orb_research.research_sizing_cli", "--config", config_path,
+                 "--output-dir", research_b, "--a-output-dir", research_a])
+        print(f"Strategy B research sizing: {research_b / 'research_sizing_report.md'}", flush=True)
+        print(f"Separate Strategy A sensitivity: {research_a / 'report.md'}", flush=True)
+        return 0
+    output = _config_path(args.output_dir or Path("outputs/strategy_b"))
+    command([python, "-m", "scripts.verify_broker_clock", "--config", config_path,
+             "--output", output / "clock_verification.json"])
+    run_dir = output / "runs" / f"{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}-{uuid4().hex[:6]}"
+    primary = run_dir / "primary"
+    legacy = run_dir / "legacy_reproduction"
+    command([python, "-m", "orb_research.filter_arms_cli", "--config", config_path,
+             "--output-dir", primary, "--arms", "both_1600_fixed"])
+    command([python, "-m", "orb_research.walk_forward_cli", "--config",
+             ROOT / "configs" / "walk_forward_base.json", "--output-dir", legacy])
+    command([python, "-m", "scripts.strategy_b_report", "--results-dir", primary,
+             "--output-dir", output, "--a-reproduction", legacy])
+    print(f"Strategy B report: {output / 'report.md'}", flush=True)
+    print("2025+ final holdout touched: NO", flush=True)
+    return 0
+
+
+def run_strategy_b_sweep(argv: list[str]) -> int:
+    """Run the one allowed training-only OR-length/buffer extension."""
+    parser = argparse.ArgumentParser(prog="python run_all.py strategy-b-sweep")
+    parser.add_argument("--config", type=Path, default=Path("configs/strategy_b_0820.json"))
+    parser.add_argument("--research-sizing-dir", type=Path,
+                        help="completed Strategy B $100k run; defaults to the newest local run")
+    parser.add_argument("--output-dir", type=Path, default=Path("outputs/strategy_b_sweep"))
+    args = parser.parse_args(argv)
+    sizing_root = ROOT / "outputs" / "strategy_b_research_sizing"
+    runs = sorted(path for path in sizing_root.iterdir() if path.is_dir() and
+                  (path / "sizing_spec.json").is_file()) if sizing_root.exists() else []
+    sizing = _config_path(args.research_sizing_dir) if args.research_sizing_dir else (runs[-1] if runs else None)
+    if sizing is None:
+        raise ValueError("run strategy-b --research-sizing first")
+    output = _config_path(args.output_dir) / f"{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}-{uuid4().hex[:6]}"
+    python = ensure_research_python()
+    command([python, "-m", "orb_research.strategy_b_sweep_cli", "--config", _config_path(args.config),
+             "--research-sizing-dir", sizing, "--output-dir", output])
+    command([python, "-m", "scripts.update_session_comparison", "--research-sizing-dir", sizing,
+             "--sweep-dir", output, "--output", ROOT / "outputs" / "session_comparison.md"])
+    print(f"Sweep report: {output / 'report.md'}", flush=True)
+    print("2025+ final holdout touched: NO", flush=True)
+    return 0
+
+
+def run_orb_framework(argv: list[str]) -> int:
+    """Compare ORB-framework range/entry timeframe pairs (default 15/15 vs 15/5)."""
+    python = ensure_research_python()
+    command([python, "-m", "orb_research.orb_framework_cli", *argv])
+    return 0
+
+
+def run_tick_scalper(argv: list[str]) -> int:
+    """Replay the ORB scalping EA tick by tick on cached FTMO ticks (development period only)."""
+    python = ensure_research_python()
+    command([python, "-m", "orb_research.tick_scalper_cli", *argv])
+    return 0
+
+
+def run_filter_arms(argv: list[str]) -> int:
+    """Run the prespecified entry-rule and exit arms through the frozen walk-forward folds."""
+    python = ensure_research_python()
+    command([python, "-m", "orb_research.filter_arms_cli", *argv])
+    return 0
+
+
+def run_ml_dataset(argv: list[str]) -> int:
+    """Build audited development events for later ML research; train no model."""
+    python = ensure_research_python()
+    command([python, "-m", "orb_research.ml_cli", *argv])
+    return 0
+
+
+def run_feature_analysis(argv: list[str]) -> int:
+    """Describe audited candidate features without fitting a model."""
+    python = ensure_research_python()
+    command([python, "-m", "orb_research.feature_analysis_cli", *argv])
+    return 0
+
+
 def run_ftmo_data(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(
         prog="python run_all.py ftmo-data",
@@ -101,8 +217,9 @@ def _prepare_backtest_config(source: Path, output: Path) -> Path:
         raise ValueError("the FTMO backtest command requires the MT5 cache source")
     end = date.fromisoformat(raw.get("development_end", "2025-01-01"))
     holdout = date.fromisoformat(raw.get("holdout_start", "2025-01-01"))
-    if end > holdout:
-        raise ValueError("development_end must not pass the sealed holdout_start")
+    if end > holdout and not raw.get("holdout_opened"):
+        raise ValueError("development_end must not pass the sealed holdout_start "
+                         "unless the config records holdout_opened")
     if output.exists() and any(output.iterdir()):
         raise ValueError(f"run directory already contains files: {output}")
     output.mkdir(parents=True, exist_ok=True)
@@ -216,7 +333,8 @@ def run_backtest(argv: list[str]) -> int:
     audit_rows = json.loads((output / "trade_audit.json").read_text(encoding="utf-8"))
     status = {
         "parameters": str(effective.resolve()), "development_end_exclusive": end,
-        "holdout_used": False, "trades": metrics["trades"],
+        "holdout_used": date.fromisoformat(end) > date.fromisoformat(selected.get("holdout_start", "2025-01-01")),
+        "trades": metrics["trades"],
         "mean_net_r": metrics["expectancy_r"], "net_return_pct": metrics["net_return_pct"],
         "signals_skipped": diagnostics["skipped"],
         "m1_zero_spread_bars": m1_quality["zero_spread_bars"],
@@ -248,7 +366,16 @@ def main() -> int:
         print("Python 3.11, 3.12 or 3.13 is required.", file=sys.stderr)
         return 1
     commands = {"backtest": run_backtest, "ftmo-data": run_ftmo_data,
-                "broker-probe": run_broker_probe, "web": run_web}
+                "broker-probe": run_broker_probe, "web": run_web,
+                "walk-forward": run_walk_forward,
+                "verify-clock": run_verify_clock,
+                "strategy-b": run_strategy_b,
+                "strategy-b-sweep": run_strategy_b_sweep,
+                "filter-arms": run_filter_arms,
+                "orb-framework": run_orb_framework,
+                "tick-scalper": run_tick_scalper,
+                "build-ml-dataset": run_ml_dataset,
+                "analyze-features": run_feature_analysis}
     if len(sys.argv) < 2 or sys.argv[1] in ("-h", "--help"):
         print("FTMO XAUUSD ORB research\n\n"
               "  python run_all.py backtest --config configs/xauusd_orb_research.json\n"
@@ -256,7 +383,20 @@ def main() -> int:
               "  python run_all.py ftmo-data --with-ticks\n"
               "  python run_all.py broker-probe --symbol XAUUSD\n"
               "  python run_all.py web --port 8520\n"
-              "  python run_all.py web --tunnel\n")
+              "  python run_all.py web --tunnel\n"
+              "  python run_all.py walk-forward\n"
+              "  python run_all.py walk-forward --replication-symbol XAGUSD --config configs/strategy_a_silver.json\n"
+              "  python run_all.py verify-clock --config configs/strategy_b_0820.json\n"
+              "  python run_all.py strategy-b --config configs/strategy_b_0820.json\n"
+              "  python run_all.py strategy-b --config configs/strategy_b_0820.json --research-sizing\n"
+              "  python run_all.py strategy-b-sweep --config configs/strategy_b_0820.json\n"
+              "  python run_all.py filter-arms\n"
+              "  python run_all.py tick-scalper --config configs/tick_scalper.json\n"
+              "  python run_all.py orb-framework\n"
+              "  python run_all.py orb-framework --pairs 15/15 15/5 15/1 30/5\n"
+              "  python run_all.py backtest --cached-only --config configs/orb_framework.json\n"
+              "  python run_all.py build-ml-dataset --config configs/walk_forward_base.json\n"
+              "  python run_all.py analyze-features --config configs/walk_forward_base.json\n")
         return 0
     selected = sys.argv[1]
     if selected not in commands:
