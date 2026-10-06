@@ -59,3 +59,43 @@ R is each trade's net P/L ÷ its planned risk.
 
 Otherwise the result is "no edge found by brute force". The best combinations are then
 reported as what they are: the luckiest of 9,216 tries.
+
+## Results (7 October 2026)
+
+`python -m scripts.brute_force_search --workers 12`, run once after the protocol above was
+committed (`a05aae9`). 9,216 combinations ran (3,072 per symbol); 8,736 met the trade-count
+minimums. Output: `outputs/search/20261007_brute_force/` (`results_*.csv`, `verdict.json`).
+
+**Verdict: no edge found.** No symbol meets all four conditions; no symbol meets condition (a)
+or (c).
+
+| | US100 | US500 | XAUUSD |
+|---|---:|---:|---:|
+| Eligible combinations | 2,816 | 2,992 | 2,928 |
+| Share profitable in training (2021-10 to 2024) | 77.5% | 55.1% | 37.8% |
+| Share profitable in test (2025 to Sep/Oct 2026) | 34.5% | 18.2% | 50.6% |
+| Spearman, training vs test mean R | −0.146 | +0.231 | +0.249 |
+| Best training combination: train → test mean R | +0.119 → −0.011 | +0.221 → −0.038 | +0.116 → −0.040 |
+| Deflated Sharpe ratio of that combination | 0.004 | 0.011 | 0.002 |
+| Median test mean R of the top 10 | −0.011 | +0.018 | −0.003 |
+| (a) best test > 0, t ≥ 2 / (b) top-10 median > 0 / (c) DSR ≥ 0.95 / (d) Spearman > 0.1 | ✗ ✗ ✗ ✗ | ✗ ✓ ✗ ✓ | ✗ ✗ ✗ ✓ |
+
+Test mean R by training-rank decile (worst to best):
+- **US100:** −0.055, −0.017, −0.014, −0.034, −0.034, −0.027, −0.038, −0.047, −0.049, −0.040. Every decile loses in the test, and the top decile does no better than the middle.
+- **US500:** −0.132, −0.051, −0.047, −0.048, −0.056, −0.074, −0.059, −0.054, −0.044, −0.024. Rank carries some information, but even the best decile loses.
+- **XAUUSD:** −0.073, −0.009, 0.004, 0.010, 0.006, 0.005, 0.011, 0.020, 0.025, 0.053. The one clear monotone pattern; its top decile averages +0.053R in the test. But no single choice from it survives the correction for 8,736 tries.
+
+**Reading.** What wins in training is mostly the luck of that period:
+- **US100:** the training winners are all 60-minute-range, long-only stop orders that bought
+  2021–24's rally. They break even in 2025–26.
+- **Best test results:** these fit the noise in the other direction. The best US100 test
+  combination (15 min, 5-min close entry, 1.5R, long; +0.31R) lost money in training
+  (−0.009R).
+- **Cost of trying everything:** a deflated Sharpe near zero for every symbol means the best
+  of ~8,700 tries is what chance alone would produce.
+- **Gold:** the decile pattern is the only hint of persistent structure. The protocol allows
+  no second round, so it is recorded here, not pursued.
+
+The frozen US100 candidate (docs/US100_CANDIDATE_PLAN.md) is outside this grid: its 12:00
+cutoff is not among the grid's cutoffs, and it has no financing. Its status is unchanged:
+robustness passed, forward test pending, 2026 negative.
