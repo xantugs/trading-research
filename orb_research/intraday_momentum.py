@@ -121,6 +121,44 @@ def s2_noise_area(close: pd.DataFrame, spread: pd.DataFrame, first_open: pd.Seri
             else pd.DataFrame(columns=["direction", "trades", "ret", "worst"]))
 
 
+def gap_fade(close: pd.DataFrame, spread: pd.DataFrame, first_open: pd.Series, slip: float = 0.1,
+             lookback: int = 14, exit_minute: int = 600) -> pd.DataFrame:
+    """M1 of docs/GAP_FADE_PLAN.md: on a large opening gap, trade against it from the close of the
+    opening bar until the previous close is reached (gap filled) or `exit_minute` (10:00)."""
+    session_open, session_close = int(close.columns[0]), int(close.columns[-1]) + 1
+    prev_close = close[session_close - 1].shift(1).to_numpy()
+    gaps = first_open.to_numpy() / prev_close - 1
+    typical = pd.Series(np.abs(gaps)).rolling(lookback, min_periods=min(10, lookback)).mean().shift(1).to_numpy()
+    last_col = exit_minute - 1 - session_open
+    rows = []
+    for i, day in enumerate(close.index):
+        gap, size, prev = gaps[i], typical[i], prev_close[i]
+        if not np.isfinite([gap, size, prev]).all():
+            continue
+        row_close, row_spread = close.iloc[i].to_numpy(), spread.iloc[i].to_numpy()
+        entry, s_in = row_close[0], row_spread[0]
+        if abs(gap) < size or gap == 0 or not np.isfinite(entry):
+            rows.append({"date": day, "trades": 0, "ret": 0.0, "worst": 0.0})
+            continue
+        direction = -1 if gap > 0 else 1
+        exit_col = None
+        for col in range(1, last_col + 1):
+            price = row_close[col]
+            if np.isfinite(price) and ((direction < 0 and price <= prev) or (direction > 0 and price >= prev)):
+                exit_col = col
+                break
+        if exit_col is None:
+            finite = np.flatnonzero(np.isfinite(row_close[1:last_col + 1]))
+            exit_col = int(finite[-1]) + 1 if len(finite) else 0
+        ret = _fill(direction, entry, row_close[exit_col], s_in, row_spread[exit_col], slip)
+        path_close, path_spread = row_close[:exit_col + 1], row_spread[:exit_col + 1]
+        ok = np.isfinite(path_close) & np.isfinite(path_spread)
+        marked = _fill(direction, entry, path_close[ok], s_in, path_spread[ok], slip) if ok.any() else np.array([ret])
+        rows.append({"date": day, "trades": 1, "ret": ret, "worst": float(min(0.0, np.min(marked), ret))})
+    return (pd.DataFrame(rows).set_index("date") if rows
+            else pd.DataFrame(columns=["trades", "ret", "worst"]))
+
+
 def summary(daily: pd.DataFrame) -> dict:
     """Mean daily return over the strategy's tradeable days (a day without a breakout counts
     as 0 for S2), its t-statistic and annualised Sharpe."""

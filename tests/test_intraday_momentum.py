@@ -87,3 +87,18 @@ def test_s2_can_list_each_trade_for_reconciliation() -> None:
     trades: list = []
     s2_noise_area(close, spread, first, slip=0.0, record=trades)
     assert [(t["direction"], t["entry_minute"], t["exit_minute"]) for t in trades] == [(1, 690, 960)]
+
+
+def test_gap_fade_trades_large_gaps_against_their_direction_until_filled() -> None:
+    from orb_research.intraday_momentum import gap_fade
+
+    days = pd.bdate_range("2023-01-02", periods=16)
+    # 15 sessions that open 0.2% above the previous close (the typical gap), then close back
+    quiet = [_day_bars(d.date().isoformat(), {"09:30": 100.2, "09:31": 100.0}, 100.0) for d in days[:15]]
+    # day 16 opens 1% up (a large gap): short at 09:31 at 101, the gap fills at 09:45 (100)
+    last = _day_bars(days[15].date().isoformat(), {"09:30": 101.0, "09:45": 100.0}, 100.0)
+    m1 = pd.concat([*quiet, last])
+    close, spread, first = session_grid(m1, np.zeros(len(m1)))
+    daily = gap_fade(close, spread, first, slip=0.0)
+    final = daily.iloc[-1]
+    assert final.trades == 1 and final.ret == pytest.approx(1.0 / 101.0)
