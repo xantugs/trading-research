@@ -98,3 +98,39 @@ price changes in session, correlated by lag, with no strategy returns.
 Both peak at lag 0, so **S&P 500 and gold are reinstated**. FTSE 100 and Nikkei 225 have no
 FTMO data before 2025 to check against, so they stay dropped. The basket candidates are
 Nasdaq-100, S&P 500, DAX, gold and WTI. The development gate and weights are unchanged.
+
+## Results (8 October 2026)
+
+**Development (2010-11 to 2017).** Every market passed the gate, so all five are in the
+basket.
+
+| | Nasdaq-100 | S&P 500 | DAX | Gold | WTI | **Basket** |
+|---|---|---|---|---|---|---|
+| bps/day | +1.81 | +0.98 | +1.95 | +0.72 | +0.39 | **+1.89** |
+| t | 1.79 | 1.10 | 1.51 | 0.86 | 0.20 | **2.05** |
+| Sharpe | 0.69 | 0.43 | 0.57 | 0.31 | 0.08 | **0.72** |
+
+The modelled FTMO spreads were 0.49, 0.77, 0.53, 0.80 and 5.00 bps respectively.
+
+**Holdouts, run once.**
+
+| | Nasdaq-100 | S&P 500 | DAX | Gold | WTI | **Basket** |
+|---|---|---|---|---|---|---|
+| A, 2018–2024: bps/day (t) | +5.89 (3.85) | +4.01 (3.29) | −0.52 (−0.42) | +0.63 (0.75) | −4.26 (−1.32) | **+2.84 (2.36)** |
+| A: winning days / winning months | 45% / 67% | 46% / 62% | 37% / 53% | 40% / 47% | 35% / 34% | **44% / 62%** |
+| B, FTMO 2025-01 to 2026-10: bps/day (t) | +2.66 (0.88) | −1.15 (−0.61) | +1.08 (0.53) | −1.60 (−0.69) | −10.87 (−2.71) | **−2.12 (−0.85)** |
+
+Basket by year, A: 2018 +9.9, 2019 −0.8, 2020 +1.3, 2021 +0.5, 2022 +6.9, 2023 +0.3,
+2024 +0.9 bps/day. B: 2025 +1.0, 2026 −6.1.
+
+**Verdict: "pass A, not confirmed by B".** Holdout A passes (t 2.36, 6 of 7 years
+positive), but the basket loses on FTMO 2025–26. The basket is also weaker than the
+Nasdaq-100 alone in both holdouts, because its weaker markets (WTI, gold, DAX) dilute the
+edge rather than smoothing it. WTI, the market with the widest spread, is the worst.
+
+**Against the user's goal.** The basket's winning days stay at 35–44% of days traded, and
+weeks with three or more winning days at 25–32%. Diversifying S2 does not make it a
+"3 days out of 5" strategy.
+
+By rule 6, nothing is re-weighted or dropped after these results. S2 on the Nasdaq-100
+(docs/INTRADAY_MOMENTUM_PLAN.md) stays the supported strategy.
