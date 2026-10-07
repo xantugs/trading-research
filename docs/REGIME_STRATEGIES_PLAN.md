@@ -77,3 +77,28 @@ R2's stop, as written ("the move at 2σ(t) or more"), fires at once when the ent
 is already beyond 2σ(t), which no protective stop intends. It is now the deviation
 reaching **max(2σ(t), the entry deviation + σ(t))** against the trade, so the stop always
 sits at least σ(t) beyond the entry. Nothing else changes.
+
+## Results (8 October 2026, `python -m scripts.regime_study`, run once)
+
+Mean bps/day (t) and win rate on traded days:
+
+| Rule, market | 2010–22 | 2023–24 | 2025–26 FTMO | 0DTE era 2023–26 | Verdict |
+|---|---|---|---|---|---|
+| R2 calm-day fade, US100 | −1.78 (−3.75), 40% | −3.30 (−2.14), 29% | −2.18 (−1.81), 41% | −2.66 (−2.79), 36% | fail |
+| R2 calm-day fade, US500 | −1.05 (−2.89), 41% | −0.50 (−0.48), 38% | −0.54 (−0.59), 42% | −0.52 (−0.76), 40% | fail |
+| R3 late-day reversal, US100 | −1.45 (−3.17), 48% | −0.87 (−0.62), 43% | −0.83 (−0.65), 50% | −0.85 (−0.90), 47% | fail |
+| R3 late-day reversal, US500 | −1.70 (−3.64), 46% | −1.07 (−0.90), 44% | −0.58 (−0.59), 52% | −0.80 (−1.06), 48% | fail |
+| R4 overnight long, US100 | +0.68 (0.52), 53% | +0.23 (0.06), 51% | +3.41 (0.78), 55% | +1.91 (0.67), 53% | fail |
+| R4 overnight long, US500 | −0.80 (−0.68), 51% | +0.62 (0.24), 52% | +0.52 (0.16), 55% | +0.57 (0.27), 54% | fail |
+
+**Verdict: none of the six passes.**
+- **The reversal rules (R2, R3) lose in every era.** Before 0DTE the losses are
+  significant (t −2.9 to −3.8). In 2023–26 they are smaller but still negative, and R2 on
+  US100 is significantly negative (t −2.8). In this data, fading intraday moves on US
+  indices still loses. The mechanism behind the 0DTE reversal claim does not show up as a
+  tradable edge here; if anything, intraday moves still tend to continue.
+- **The overnight long (R4) is roughly flat** once FTMO's swap is paid. It wins slightly
+  more than half the nights, with no significant edge.
+
+By the one-run rule, none of these is retried with other settings. Flipping R2 or R3 into
+momentum rules after seeing these losses would be choosing on the results.
