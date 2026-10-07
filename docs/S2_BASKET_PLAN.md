@@ -71,3 +71,30 @@ basket's holdout A is not fully unseen. Its six other markets are.
    Each is given for the basket and for each market.
 6. **One run per holdout.** No market is added or removed, and no weight changed, after
    any holdout result.
+
+## Amendment 1 (8 October 2026, after the clock check, before any strategy run)
+
+The clock check's rule (the volatility jump within ±2 minutes of the session open, in at
+least 70% of year-seasons) passed Nasdaq-100 (90%), DAX (97%) and WTI (74%; HistData has
+no WTI file for 2024, so WTI's holdout A is 2018–2023). It dropped four markets:
+
+| Market | Jump at the open | Where the other jumps fall |
+|---|---|---|
+| S&P 500 | 69% | mostly 10:00 New York |
+| Gold | 10% | almost all 08:30 New York |
+| FTSE 100 | 69% | scattered, 07:31–08:55 |
+| Nikkei 225 | 7% | 08:30–08:45 Tokyo |
+
+For S&P 500 and gold, the jumps sit on the scheduled US data releases (10:00 and 08:30 New
+York). That points to news outranking the open, not a wrong clock. Both have FTMO data
+overlapping HistData, so they were re-checked with the Nasdaq calibration test: 1-minute
+price changes in session, correlated by lag, with no strategy returns.
+
+| Overlap test | All | Summer | Winter | At ±1 or ±60 minutes |
+|---|---|---|---|---|
+| S&P 500 vs US500.cash, 2021-10 to 2024 | 0.893 | 0.895 | 0.889 | ≤ 0.10 |
+| Gold vs FTMO XAUUSD, 2018 to 2024 | 0.886 | 0.870 | 0.921 | ≤ 0.04 |
+
+Both peak at lag 0, so **S&P 500 and gold are reinstated**. FTSE 100 and Nikkei 225 have no
+FTMO data before 2025 to check against, so they stay dropped. The basket candidates are
+Nasdaq-100, S&P 500, DAX, gold and WTI. The development gate and weights are unchanged.
