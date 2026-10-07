@@ -74,20 +74,36 @@ def s2_noise_area(close: pd.DataFrame, spread: pd.DataFrame, first_open: pd.Seri
             continue
         upper = max(open_, prev) * (1 + sigma[i])
         lower = min(open_, prev) * (1 - sigma[i])
-        position, entry, s_entry, total, trades = 0, 0.0, 0.0, 0.0, 0
+        row_close, row_spread = close.iloc[i].to_numpy(), spread.iloc[i].to_numpy()
+        position, entry, s_entry, total, trades, worst, start_col = 0, 0.0, 0.0, 0.0, 0, 0.0, 0
+
+        def marked_low(end_col: int) -> float:
+            """Lowest day P/L while the open position ran: realized so far plus its exit value
+            at every minute close (what an equity-based daily loss limit sees)."""
+            bids, spreads = row_close[start_col:end_col + 1], row_spread[start_col:end_col + 1]
+            ok = np.isfinite(bids) & np.isfinite(spreads)
+            if not ok.any():
+                return total
+            values = _fill(position, entry, bids[ok], s_entry, spreads[ok], slip)
+            return total + float(np.min(values))
+
         for k, minute in enumerate(CHECKPOINTS):
             price, s_now = prices[i, k], spread.at[day, minute - 1]
             if not np.isfinite(price):
                 continue
             if (position > 0 and price <= upper[k]) or (position < 0 and price >= lower[k]):
+                worst = min(worst, marked_low(minute - 1 - OPEN))
                 total += _fill(position, entry, price, s_entry, s_now, slip)
                 position = 0
             if position == 0 and (price > upper[k] or price < lower[k]):
                 position, entry, s_entry, trades = (1 if price > upper[k] else -1), price, s_now, trades + 1
+                start_col = minute - 1 - OPEN
         if position:
+            worst = min(worst, marked_low(CLOSE - 1 - OPEN))
             total += _fill(position, entry, last, s_entry, s_last, slip)
-        rows.append({"date": day, "direction": 0, "trades": trades, "ret": total})
-    return pd.DataFrame(rows).set_index("date") if rows else pd.DataFrame(columns=["direction", "trades", "ret"])
+        rows.append({"date": day, "direction": 0, "trades": trades, "ret": total, "worst": min(worst, total)})
+    return (pd.DataFrame(rows).set_index("date") if rows
+            else pd.DataFrame(columns=["direction", "trades", "ret", "worst"]))
 
 
 def summary(daily: pd.DataFrame) -> dict:

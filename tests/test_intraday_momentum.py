@@ -44,3 +44,15 @@ def test_s2_enters_a_breakout_of_the_noise_area_and_is_flat_at_the_close() -> No
     final = daily.iloc[-1]
     assert final.trades == 1 and final.ret == pytest.approx(0.0)  # long at 102 from 11:30, out at 102
     assert (daily.trades.iloc[:-1] == 0).all() or daily.index[0] > days[0].date()
+
+
+def test_s2_records_the_days_lowest_marked_equity_for_daily_loss_limits() -> None:
+    days = pd.bdate_range("2023-01-02", periods=16)
+    quiet = [_day_bars(d.date().isoformat(), {}, 100.0) for d in days[:15]]
+    # day 16: breakout long at 11:30 (102), dips to 99 at 13:10, recovers to 102 by the close
+    last = _day_bars(days[15].date().isoformat(), {"11:00": 102.0, "13:10": 99.0, "13:20": 102.0}, 100.0)
+    m1 = pd.concat([*quiet, last])
+    close, spread, first = session_grid(m1, np.zeros(len(m1)))
+    final = s2_noise_area(close, spread, first, slip=0.0).iloc[-1]
+    assert final.ret == pytest.approx(0.0)
+    assert final.worst == pytest.approx((99.0 - 102.0) / 102.0)
