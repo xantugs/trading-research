@@ -147,7 +147,7 @@ def fit() -> int:
     tr, va = in_split(dec.date, "train"), in_split(dec.date, "valid")
     ok = np.isfinite(dec[["fwd30", "fwd60", "fwd_close"]].to_numpy()).all(axis=1)
     blend_a = Blend().fit(xa[tr & ok], ya[tr & ok], wa[tr & ok], xa[va & ok], ya[va & ok], wa[va & ok])
-    close, spread, _ = data["NSX"]["grids"]
+    close, spread, _ = data["grids"]["NSX"]
     valid_rows = dec[va]
     p_valid = blend_a.predict(xa[va])
     scores = {theta: sharpe(trade_direct(valid_rows, p_valid, theta, close, spread)) for theta in THETA_GRID}
@@ -179,7 +179,7 @@ def evaluate(data: dict, models: dict, choices: dict, split: str) -> dict:
     out["B_trades_total"] = int(in_days.sum())
     dec = data["NSX"]["decisions"]
     rows = dec[in_split(dec.date, split)]
-    close, spread, _ = data["NSX"]["grids"]
+    close, spread, _ = data["grids"]["NSX"]
     daily_a = trade_direct(rows, models["A"].predict(rows[list(FEATURES)].to_numpy(np.float64)), choices["A_theta"], close, spread)
     out["A"] = stats(daily_a.ret, daily_a.trades)
     out["A_win_rate_traded_days"] = float((daily_a.ret[daily_a.trades > 0] > 0).mean())

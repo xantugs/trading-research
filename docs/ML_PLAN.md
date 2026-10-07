@@ -132,3 +132,59 @@ rounds). One model per label.
 2. The sealed test and the FTMO check run **once**, together, after the choices are
    written to `outputs/ml/choices.json`.
 3. The results are recorded whatever they are.
+
+## Results (8–9 October 2026, `python -m scripts.ml_study build|fit|test`)
+
+**Run notes.** Three code faults stopped earlier runs before any test result existed:
+- a wrong dictionary key;
+- a model class that pickle could not save;
+- the same class failing to load in a new process.
+
+They were fixed and the fit was re-run. All seeds are fixed, so the validation choices
+were identical in every run, as `outputs/ml/run2.log` to `run4.log` show. The sealed test
+ran once (`outputs/ml/test_results.json`).
+
+**Data.**
+- HistData: 40,971 Nasdaq and 40,946 S&P decision rows; 2,627 and 2,735 S2 trades.
+- FTMO 2025–26: 6,011 decision rows each; 376 and 430 S2 trades.
+
+**Validation choices (2018–2021).**
+- **B:** p\* = 0.55. Filtered Nasdaq S2 had a validation Sharpe of 1.82, against 1.52
+  unfiltered; the other values were 0.40: 1.80, 0.45: 1.77, 0.50: 1.78.
+- **A:** θ = 0.00. Validation Sharpe 0.91; the other values were 0.02: 0.78, 0.05: 0.88,
+  0.08: 0.88.
+
+### Project B: meta-labeling S2
+
+| Nasdaq S2 | Sealed test 2022–2024 | FTMO 2025-01 to 2026-10 |
+|---|---|---|
+| Unfiltered: bps/day, Sharpe, trade win rate | +6.73, 1.77, 44% | +2.80, 0.73, 40% |
+| Filtered (P ≥ 0.55): bps/day, Sharpe, trade win rate | +4.28, 1.81, **50%** | −0.12, −0.09, 41% |
+| Trades kept | 119 of 451 | 75 of 336 |
+
+**Verdict: fail.** The filter raised the trade win rate in the test (44% to 50%), but cut
+the mean (+4.28 against +6.73 bps/day) and lifted the Sharpe by only 0.04, short of the
+0.20 required. On FTMO 2025–26 it made S2 worse. Skipping 74% of S2's trades throws away
+too much of the profit from S2's big winners.
+
+### Project A: direct 30-minute predictor
+
+| | Sealed test 2022–2024 | FTMO 2025-01 to 2026-10 |
+|---|---|---|
+| bps/day (t), Sharpe | **+6.92 (1.61), 1.00** | +5.34 (1.07), 0.80 |
+| By year | 2022 +10.4, 2023 +16.0, 2024 −1.6 | 2025 +5.8, 2026 +4.8 |
+| Winning days / winning months | 53% / 70% | 52% / 50% |
+| $/day for $10k at 4× | +$27.7 | +$21.4 |
+
+It traded every day, changing position at the checkpoints.
+
+**Verdict: fail** under the plan. The test t of 1.61 is short of the 2.0 required, though 2
+of 3 years are positive and the mean is above 0. Two things are notable and **not** a
+pass:
+- the predictor is positive on both the sealed test and FTMO 2025–26, the period in which
+  S2 and the published intraday momentum strategies weakened;
+- it wins 52–53% of days.
+
+Both are compatible with a small real signal, and with luck. Any further use of it is a
+new hypothesis that needs fresh data, such as a demo forward test next to S2, and not a
+re-tuning on these years.

@@ -4,6 +4,8 @@ weights scale each row's loss."""
 from __future__ import annotations
 
 import numpy as np
+import torch
+from torch import nn
 
 XGB_PARAMS = {"tree_method": "hist", "max_depth": 5, "learning_rate": 0.03, "subsample": 0.8,
               "colsample_bytree": 0.7, "min_child_weight": 50, "objective": "binary:logistic",
@@ -42,27 +44,28 @@ class Standardiser:
         return np.nan_to_num(np.clip(z, -10, 10), nan=0.0).astype(np.float32)
 
 
+class AEMLP(nn.Module):
+    """Supervised autoencoder + MLP: noisy encoder -> 32-d code, decoder back to the inputs,
+    an auxiliary head on the code, and the main MLP on [inputs, code]."""
+
+    def __init__(self, n_in: int, n_out: int):
+        super().__init__()
+        self.noise = 0.05
+        self.encoder = nn.Sequential(nn.BatchNorm1d(n_in), nn.Linear(n_in, 96), nn.SiLU(), nn.Linear(96, 32), nn.SiLU())
+        self.decoder = nn.Sequential(nn.Linear(32, 96), nn.SiLU(), nn.Linear(96, n_in))
+        self.aux = nn.Linear(32, n_out)
+        self.head = nn.Sequential(nn.BatchNorm1d(n_in + 32), nn.Dropout(0.2), nn.Linear(n_in + 32, 256),
+                                  nn.BatchNorm1d(256), nn.SiLU(), nn.Dropout(0.2), nn.Linear(256, 128),
+                                  nn.BatchNorm1d(128), nn.SiLU(), nn.Dropout(0.2), nn.Linear(128, n_out))
+
+    def forward(self, x):
+        noisy = x + self.noise * torch.randn_like(x) if self.training else x
+        code = self.encoder(noisy)
+        return self.decoder(code), self.aux(code), self.head(torch.cat([x, code], dim=1))
+
+
 def _build_aemlp(n_in: int, n_out: int):
-    import torch
-    from torch import nn
-
-    class AEMLP(nn.Module):
-        def __init__(self):
-            super().__init__()
-            self.noise = 0.05
-            self.encoder = nn.Sequential(nn.BatchNorm1d(n_in), nn.Linear(n_in, 96), nn.SiLU(), nn.Linear(96, 32), nn.SiLU())
-            self.decoder = nn.Sequential(nn.Linear(32, 96), nn.SiLU(), nn.Linear(96, n_in))
-            self.aux = nn.Linear(32, n_out)
-            self.head = nn.Sequential(nn.BatchNorm1d(n_in + 32), nn.Dropout(0.2), nn.Linear(n_in + 32, 256),
-                                      nn.BatchNorm1d(256), nn.SiLU(), nn.Dropout(0.2), nn.Linear(256, 128),
-                                      nn.BatchNorm1d(128), nn.SiLU(), nn.Dropout(0.2), nn.Linear(128, n_out))
-
-        def forward(self, x):
-            noisy = x + self.noise * torch.randn_like(x) if self.training else x
-            code = self.encoder(noisy)
-            return self.decoder(code), self.aux(code), self.head(torch.cat([x, code], dim=1))
-
-    return AEMLP()
+    return AEMLP(n_in, n_out)
 
 
 def fit_aemlp(x_train, y_train, w_train, x_valid, y_valid, w_valid, seed: int = 0,
