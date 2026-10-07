@@ -55,3 +55,36 @@ excluded.
    same dates.
 4. **If nothing is adopted,** there is no final test, and the candidate stays as frozen.
 5. **One round only.** No new tweaks are added after seeing these results.
+
+## Results (run 7 October 2026, `scripts/us100_tweak_study.py`)
+
+Development run, with bars loaded only to 2024-12-31. Mean R per trade, with the trade count in brackets.
+The 50% trade floor is 317 trades in A and 136 in B.
+
+| Run | A: 2021-10 to 2023 | B: 2024 | Adopted |
+|---|---|---|---|
+| Baseline | +0.085 (633) | +0.101 (272) | |
+| T1 trend filter | +0.126 (287) | +0.162 (144) | no: 45% of trades in A |
+| T2 breakeven at +1R | +0.103 (633) | +0.108 (272) | **yes** |
+| T3 gap filter | +0.080 (490) | +0.120 (205) | no: worse in A |
+| T4 range 1.25–3 × ATR | +0.099 (296) | +0.240 (155) | no: 47% of trades in A |
+| T5 first breakout only | +0.096 (555) | +0.154 (238) | **yes** |
+| T6 flat at 16:00 | +0.063 (633) | +0.040 (274) | no: worse in both |
+| T7 5-minute entries | +0.045 (717) | +0.090 (309) | no: worse in both |
+| T8 long only | +0.085 (329) | +0.213 (142) | **yes**, by +0.0006R in A |
+| Combined T2 + T5 + T8 | +0.129 (329) | +0.210 (142) | |
+
+**Final test, run once on 2025-01-01 to 2026-10-06:**
+
+| Rule set | Mean R | Trades |
+|---|---|---|
+| Combined T2 + T5 + T8 | **+0.010** | 264 |
+| Baseline (candidate unchanged) | +0.065 | 483 |
+
+**Verdict: failed.** The combined set is above 0 but well below the baseline. The candidate
+stays as frozen, and by rule 5 there is no second round. The large gain on 2021-10 to
+2024 (+0.13 and +0.21R vs +0.09 and +0.10R) did not carry into 2025–26. This is the
+usual sign of in-sample selection: eight tries, three kept by small margins, and T8 kept
+by 0.0006R. T1 and T4 looked best in-sample but were rejected by the trade floor fixed in
+advance. Testing them now on 2025–26 would be a rescue search and is not done.
+Results: `outputs/indices/us100_tweaks/dev_results.json` and `final_results.json`.
