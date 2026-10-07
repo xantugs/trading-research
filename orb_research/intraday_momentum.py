@@ -62,7 +62,9 @@ def s2_noise_area(close: pd.DataFrame, spread: pd.DataFrame, first_open: pd.Seri
                   slip: float = 0.1, lookback: int = 14) -> pd.DataFrame:
     prices = close[[c - 1 for c in CHECKPOINTS]].to_numpy()
     moves = np.abs(prices / first_open.to_numpy()[:, None] - 1)
-    sigma = pd.DataFrame(moves).rolling(lookback, min_periods=lookback).mean().shift(1).to_numpy()
+    # Average over the previous `lookback` days that have the price; a half-day or a data gap
+    # must not blank the next two weeks (at least 10 of the 14 days are required).
+    sigma = pd.DataFrame(moves).rolling(lookback, min_periods=min(10, lookback)).mean().shift(1).to_numpy()
     prev_close = close[CLOSE - 1].shift(1).to_numpy()
     rows = []
     for i, day in enumerate(close.index):

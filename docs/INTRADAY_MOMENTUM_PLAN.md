@@ -65,3 +65,19 @@ without VWAP, because the feed has no volume.
 Reported for each strategy and period: trades, days traded, mean daily return in basis
 points, t, hit rate, annualised Sharpe (from daily returns, with trade-free days at 0),
 and yearly mean.
+
+## Amendment 1 (8 October 2026, after the development run, before any holdout run)
+
+S2's first development run covered only 929 of about 1,700 days. Its 14-day average move
+used a strict rolling window, so one day with a missing checkpoint price (a half-day or a
+data gap, about 80 such days) blanked σ for the next 14 days. The plan defines σ as "the
+average move at t over the previous 14 trading days", so the code now averages the days
+that have the price and requires at least 10 of the 14. This is a correctness fix, and no
+setting changed.
+
+| Development run | S1 | S2 |
+|---|---|---|
+| First (the bug) | −0.12 bps/day, t −0.20, 1,710 days | +2.71 bps/day, t 2.07, 929 days |
+| After the fix | −0.12 bps/day, t −0.20, 1,710 days | **+1.79 bps/day, t 1.77, 1,696 days** |
+
+S1 stops at the development gate. S2 passes it and goes to the holdout.
