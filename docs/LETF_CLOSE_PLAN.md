@@ -44,3 +44,18 @@ large open-to-15:00 moves from 15:00 to 16:00 and lost money in 2023–26. That 
 knowledge that late-day moves continued on such days. L1 differs in its signal (move from
 the previous close), its window (the last 15 minutes) and its threshold, but it is not
 fully independent of what we have already seen.
+
+## Results (8 October 2026, `python -m scripts.letf_close_study`, run once)
+
+| | FTMO 2021-10 to 2026-10 | 2021-10 to 2023 | 2024 to 2026-10 | HistData 2010-11 to 2020 (context) |
+|---|---|---|---|---|
+| US100: bps/day (t), win rate on days traded | −0.46 (−0.94), 46% | +0.86 (1.07), 49% | **−1.41 (−2.34)**, 43% | +0.23 (0.64), 47% |
+| US500: bps/day (t), win rate on days traded | −0.74 (−1.71), 44% | +0.28 (0.39), 50% | **−1.48 (−2.77)**, 40% | +0.56 (1.74), 51% |
+
+**Verdict: both fail.** Big-move days traded about 43% of the time. The mechanism predicts
+the effect is strongest now, but in 2024–26, the record-flow period, the last 15 minutes
+of big days **reversed** significantly on both indices. One reading is that traders now
+front-run the predictable rebalancing flow before 15:45 and the move gives back into the
+close. This study cannot tell. The fade of the same window is not tested here, because
+choosing it after seeing these results would be choosing on the data. It could only be
+judged on new data, such as a forward demo.
