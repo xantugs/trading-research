@@ -46,3 +46,23 @@ specified here, from those findings, and nothing is tuned.
 
    These are reported for development, holdout A and holdout B, next to S2 alone.
 5. **One holdout run.** Nothing is changed after it.
+
+## Results (8 October 2026)
+
+| | Fade alone | S2 alone | S2 + fade |
+|---|---|---|---|
+| Development 2010-11 to 2017: bps/day (t) | +0.29 (0.56) | +1.79 (1.77) | +2.03 (1.84) |
+| Development: winning days, of days traded | 48% | 41% | 46% |
+| **Holdout A, 2018–2024: bps/day (t)** | **+0.29 (0.38)** | +5.87 (3.84) | +5.91 (3.63) |
+| Holdout A: winning days / weeks with 3+ wins / winning months | 50% / 5% / 53% | 45% / 10% / 67% | 49% / 26% / 54% |
+| Holdout B, FTMO 2025-01 to 2026-10: bps/day (t) | +1.31 (0.87) | +2.66 (0.88) | +3.88 (1.23) |
+| Holdout B: winning days | 53% | 44% | 50% |
+
+The fade by year, holdout A: 2018 +3.4, 2019 −1.4, 2020 +3.4, 2021 +0.5, 2022 −5.6,
+2023 +3.4, 2024 −0.5 bps/day. It traded on about 40% of days.
+
+**Verdict: fail.** The fade's holdout t is 0.38 (2.0 was required), though 4 of 7 years
+were positive. It wins about half the days it trades and earns about nothing after costs,
+which is what Grant, Wolf & Yu warned. Adding it to S2 lifts winning days from about 45%
+to about 50%. In holdout A it also lowers the Sharpe ratio (1.53 against 1.65) and cuts
+winning months from 67% to 54%. So it is not adopted, and S2 alone stays the strategy.
