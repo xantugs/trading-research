@@ -117,3 +117,28 @@ All three scenarios are reported for every L.
 **Choice (fixed now).** For each account type, the (Lc, Lf) with the highest mean net per
 month under the **development** edge. The holdout and zero-edge results are reported next
 to it, with the chance of finishing the 12 months below zero.
+
+### Lifecycle results (`python -m scripts.s2_lifecycle`; full grid in `outputs/s2_sizing/lifecycle.csv`)
+
+Per $100k account, averaged over the first 12 months. The months before the first payout
+are included.
+
+| Plan (chosen by rule) | Scenario | Mean net per month | Median net per month | Months to first payout | Below zero after 12 months |
+|---|---|---|---|---|---|
+| **1-Step, Lc 3×, Lf 2×** | development | **+$403** | +$264 | 5.7 | 33% |
+| | holdout | +$900 | +$747 | 4.4 | 22% |
+| | zero edge | +$23 | −$195 | 5.6 | 61% |
+| **2-Step, Lc 4×, Lf 2×** | development | **+$330** | +$194 | 6.1 | 37% |
+| | holdout | +$1,086 | +$960 | 4.5 | 16% |
+| | zero edge | +$67 | −$180 | 5.9 | 62% |
+
+**Reading.**
+- Both winners sit at the top of the grid. A trader's losses are capped at the fees while
+  payouts are not, so the most aggressive sizes score best on average, even with zero
+  edge (+$23 to +$67 a month). That is the prop-firm payoff, not evidence of skill. With
+  zero edge, the typical (median) year still loses about $2,200.
+- The grid was not widened after these results. Larger sizes would lean even harder on
+  the uncertain edge and on daily-limit breaches that minute bars understate.
+- The funded sizes here (2×) are far above the "keep the account" sizes chosen earlier
+  (1× and 0.5×). This plan expects to lose funded accounts and buy new challenges, and it
+  only pays if the edge is real.
