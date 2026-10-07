@@ -78,6 +78,17 @@ class Config:
     gap_max_atr: float | None = None
     # move the stop to the entry price once price has reached this many R in profit.
     breakeven_r: float | None = None
+    # Account protection, mirrored by the EA's inputs (null disables each one).
+    # Risk drops to risk_throttle_percent while equity is more than risk_throttle_below_pct
+    # below the starting balance (initial_equity):
+    risk_throttle_below_pct: float | None = None
+    risk_throttle_percent: float | None = None
+    # no new entries once equity is this % below the balance at the start of the broker day
+    # (17:00 New York, midnight on FTMO's server):
+    daily_loss_stop_pct: float | None = None
+    # no new entries at all once equity is this % below the starting balance.  The EA also
+    # closes its open positions there; the backtest lets them run to their own exits.
+    equity_stop_pct: float | None = None
     # How cached MT5 bar timestamps are decoded. "stored_as_utc" is the historical behaviour
     # (MT5 epoch seconds taken as UTC); "new_york_plus_7" decodes a broker clock that runs at
     # New York time + 7 h year-round, which is what the FTMO-Demo XAUUSD cache actually holds.
@@ -201,6 +212,14 @@ class Config:
                 raise ValueError("breakeven_r must be positive")
             if self.trail_atr_multiple is not None:
                 raise ValueError("breakeven_r and a trailing stop cannot be combined")
+        if (self.risk_throttle_below_pct is None) != (self.risk_throttle_percent is None):
+            raise ValueError("risk_throttle_below_pct and risk_throttle_percent go together")
+        if self.risk_throttle_percent is not None and not 0 < float(self.risk_throttle_percent) <= self.risk_percent:
+            raise ValueError("risk_throttle_percent must be positive and at most risk_percent")
+        for name in ("risk_throttle_below_pct", "daily_loss_stop_pct", "equity_stop_pct"):
+            value = getattr(self, name)
+            if value is not None and not 0 < float(value) < 100:
+                raise ValueError(f"{name} must be between 0 and 100")
         if self.financing_pct_annual < 0:
             raise ValueError("financing_pct_annual must be nonnegative")
 

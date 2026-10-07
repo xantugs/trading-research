@@ -65,6 +65,12 @@
               <p class="hint">With a trail set there is no fixed target: from the start level the stop follows each entry-bar close by the ATR multiple and only tightens. Leave it blank for a fixed target.</p>
             </details>
 
+            <details class="advanced" id="guardGroup"><summary>Account protection <span class="chip" id="guardChip">Off</span></summary>
+              <div class="fields two"><label>Cut risk below <span>% under start</span><input name="risk_throttle_below_pct" type="number" min="0.1" max="50" step="0.1" placeholder="off"></label><label>… to risk <span>% equity</span><input name="risk_throttle_percent" type="number" min="0.01" max="2" step="0.01" placeholder="off"></label></div>
+              <div class="fields two"><label>Daily loss stop <span>% under day start</span><input name="daily_loss_stop_pct" type="number" min="0.1" max="50" step="0.1" placeholder="off"></label><label>Hard stop <span>% under start</span><input name="equity_stop_pct" type="number" min="0.1" max="50" step="0.1" placeholder="off"></label></div>
+              <p class="hint">The EA's v1.40 guards, measured from the starting balance. The backtest checks them at each entry; the EA checks every tick and also closes its positions at the hard stop. Leave a box blank to switch that guard off.</p>
+            </details>
+
             <details class="advanced" id="costsGroup"><summary>Costs &amp; account <span class="chip" id="costsChip">—</span></summary>
               <div class="fields two"><label>Starting balance <span>USD</span><input name="initial_equity" type="number" min="100" max="1000000" step="100" required></label><label>Spread multiplier<input name="spread_multiplier" type="number" min="0.1" max="10" step="0.1" required></label></div>
               <div class="fields two"><label>Slippage <span>price</span><input name="slippage_price" type="number" min="0" max="10" step="0.01" required></label><label>Zero-spread fallback <span>price</span><input name="fallback_spread_price" type="number" min="0" max="10" step="0.01" required></label></div>

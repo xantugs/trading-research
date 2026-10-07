@@ -37,12 +37,15 @@ PRESETS = (
     {"id": "us100_candidate", "label": "US100 candidate · forward test (0.5%)",
      "summary": "The frozen candidate (docs/US100_CANDIDATE_PLAN.md): FTMO US100.cash, 09:30 NY "
                 "15m range, first 15m close outside it per direction before 12:00, held to stop "
-                "or 1.5R, at the forward test's 0.5% risk. Passed all robustness checks; 2026 negative.",
-     "config": "configs/indices/ftmo_us100_orb_framework_15_15.json", "overrides": {"risk_percent": 0.5}},
+                "or 1.5R, at the forward test's 0.5% risk with the EA's account protection. "
+                "Passed all robustness checks; 2026 negative.",
+     "config": "configs/indices/ftmo_us100_orb_framework_15_15.json",
+     "overrides": {"risk_percent": 0.5, "risk_throttle_below_pct": 5.0, "risk_throttle_percent": 0.25, "daily_loss_stop_pct": 2.5, "equity_stop_pct": 8.5}},
     {"id": "us100_candidate_1p5", "label": "US100 candidate · 1.5% risk",
      "summary": "The same frozen rules at 1.5% risk, the forward test's second account: about a "
                 "coin flip to pass an FTMO challenge, roughly two months when it does.",
-     "config": "configs/indices/ftmo_us100_orb_framework_15_15.json", "overrides": {"risk_percent": 1.5}},
+     "config": "configs/indices/ftmo_us100_orb_framework_15_15.json",
+     "overrides": {"risk_percent": 1.5, "risk_throttle_below_pct": 5.0, "risk_throttle_percent": 0.25, "daily_loss_stop_pct": 2.5, "equity_stop_pct": 8.5}},
     {"id": "orb_framework", "label": "Video EA · 15m range, 5m entries",
      "summary": "ORB-framework EA as shown: 09:30 NY range, first 5m close outside it per "
                 "direction, no entries from 12:00, held to stop or 1.5R, 2% risk.",
@@ -90,12 +93,14 @@ EDITABLE = {
     "commission_per_lot_side", "commission_rate_pct_side",
     "entry_mode", "or_candle", "or_atr_period", "or_min_atr", "or_max_atr", "flat_time",
     "trail_atr_multiple", "trail_activation_r", "trail_atr_period", "financing_pct_annual",
+    "risk_throttle_below_pct", "risk_throttle_percent", "daily_loss_stop_pct", "equity_stop_pct",
 }
 # Integer fields and their allowed range; range/entry minutes are checked by Config itself.
 INTEGERS = {"range_minutes": None, "signal_minutes": None,
             "or_atr_period": (1, 20_000), "trail_atr_period": (1, 1_000)}
 # Fields where null switches the rule off (a blank box in the browser).
-NULLABLE = {"or_min_atr", "or_max_atr", "trail_atr_multiple", "flat_time"}
+NULLABLE = {"or_min_atr", "or_max_atr", "trail_atr_multiple", "flat_time", "risk_throttle_below_pct",
+            "risk_throttle_percent", "daily_loss_stop_pct", "equity_stop_pct"}
 BOUNDS = {
     "risk_percent": (0.01, 2.0), "reward_risk": (0.1, 10.0),
     "stop_width_multiple": (0.1, 10.0), "atr_stop_multiple": (0.1, 10.0),
@@ -105,6 +110,8 @@ BOUNDS = {
     "commission_rate_pct_side": (0.0, 1.0),
     "or_min_atr": (0.01, 20.0), "or_max_atr": (0.01, 20.0), "trail_atr_multiple": (0.1, 10.0),
     "trail_activation_r": (0.0, 10.0), "financing_pct_annual": (0.0, 50.0),
+    "risk_throttle_below_pct": (0.1, 50.0), "risk_throttle_percent": (0.01, 2.0),
+    "daily_loss_stop_pct": (0.1, 50.0), "equity_stop_pct": (0.1, 50.0),
 }
 # What a tick-scalper run folder reports about its settings (it has no ORB form fields).
 SCALPER_KEYS = ("range_open", "range_minutes", "cutoff", "sl_points", "tp_points", "trail_points",

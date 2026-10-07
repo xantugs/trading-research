@@ -3,9 +3,17 @@
 //|            Opening Range Breakout - backtest / research EA (MT5) |
 //+------------------------------------------------------------------+
 //
-//  v1.30 (orb-backtest forward test)
+//  v1.40 (orb-backtest forward test)
 //  -----------------------------------
-//  Derived from ORB_Backtest.mq5 v1.20.  Changes:
+//  v1.40 adds account protection, mirrored by the Python backtester:
+//   - risk throttle: risk drops to InpThrottleRisk while equity is more than
+//     InpThrottleBelowPct below the account's starting balance;
+//   - daily loss stop: no new entries for the rest of the server day once equity
+//     is InpDailyStopPct below the balance at the start of the day;
+//   - hard stop: once equity is InpHardStopPct below the starting balance, every
+//     position of this EA is closed and the EA stops trading until the global
+//     variable ORB_<login>_<symbol>_halted is deleted (F3 in the terminal).
+//  v1.30, derived from ORB_Backtest.mq5 v1.20:
 //   - separate range and entry timeframes (the ORB-framework idea): the range is
 //     one InpRangeTimeframe candle at the ORB time, entries are confirmed on
 //     InpEntryTimeframe closes after that candle has closed;
@@ -54,7 +62,7 @@
 //
 //+------------------------------------------------------------------+
 #property copyright   "echo"
-#property version     "1.30"
+#property version     "1.40"
 #property description "Opening Range Breakout EA - research / backtesting tool."
 #property description "Captures one candle's high/low each day and trades the first"
 #property description "breakout per direction before a cutoff hour."
@@ -63,7 +71,7 @@
 #include <Trade/Trade.mqh>
 
 #define ORB_BOX_PREFIX "ORB_box_"
-#define ORB_VERSION    "1.30"
+#define ORB_VERSION    "1.40"
 
 //+------------------------------------------------------------------+
 //| Enums (the trailing comments are what MetaTrader shows in the    |
@@ -157,6 +165,13 @@ input string               InpComment        = "ORB bot";           // Trade com
 input ulong                InpMagic          = 20260512;            // Magic number
 input int                  InpDeviation      = 10;                  // Max slippage (points)
 
+input group "Account protection"
+input double               InpStartBalance   = 0.0;                 // Account starting balance (0 = balance when first attached, remembered)
+input double               InpThrottleBelowPct = 5.0;               // Cut risk while equity is this % below the start (0 = off)
+input double               InpThrottleRisk   = 0.25;                // ... to this risk per trade (% of equity)
+input double               InpDailyStopPct   = 2.5;                 // No new entries once equity is this % below the day's starting balance (0 = off)
+input double               InpHardStopPct    = 8.5;                 // Close all and stop once equity is this % below the start (0 = off)
+
 input group "Logging and display"
 input string               InpLogFile        = "auto";              // Trade log in Common\Files ("auto" = ORB_<login>_<symbol>.csv, empty = off)
 input bool                 InpShowPanel      = true;                // Show status panel on the chart
@@ -209,6 +224,12 @@ bool        g_eodDone      = false;   // end-of-day close finished for today
 string      g_dayStatus    = "";      // shown on the panel while no range is set
 int         g_closedCount  = 0;       // rows written to the log this run
 TradeRecord g_open[];                 // trades opened by this EA, not yet logged
+double      g_startBalance = 0.0;     // account starting balance for the throttle and hard stop
+datetime    g_guardDay     = 0;       // server day the daily-loss reference belongs to
+double      g_dayBalance   = 0.0;     // balance at the start of that day
+bool        g_dailyStopped = false;   // daily loss stop reached: no new entries today
+bool        g_halted       = false;   // hard stop reached: flat and no trading
+string      g_haltKey      = "";      // global variable that keeps the halt across restarts
 
 //+------------------------------------------------------------------+
 //| Expert initialization                                            |
@@ -251,6 +272,12 @@ int OnInit()
    if(InpTrailStartR > 0.0 && InpTrailDistR <= 0.0)
       return(Fail("Trail distance must be positive when trailing is on"));
 
+   if(InpStartBalance < 0.0 || InpThrottleBelowPct < 0.0 || InpThrottleBelowPct >= 100.0 ||
+      InpDailyStopPct < 0.0 || InpDailyStopPct >= 100.0 || InpHardStopPct < 0.0 || InpHardStopPct >= 100.0)
+      return(Fail("Account-protection percentages must be between 0 and 100"));
+   if(InpThrottleBelowPct > 0.0 && (InpThrottleRisk <= 0.0 || InpThrottleRisk > InpRiskPercent))
+      return(Fail("Throttled risk must be positive and no higher than the normal risk"));
+
 //--- trade object
    trade.SetExpertMagicNumber(InpMagic);
    trade.SetDeviationInPoints((ulong)InpDeviation);
@@ -276,6 +303,21 @@ int OnInit()
      }
    if(g_atrHandle == INVALID_HANDLE && (InpMinRangeAtr > 0.0 || InpMaxRangeAtr > 0.0))
       return(Fail("Range/ATR filter needs a daily ATR period greater than 0"));
+
+//--- account protection: starting balance and a halt that survives restarts
+   const long login = AccountInfoInteger(ACCOUNT_LOGIN);
+   const string startKey = StringFormat("ORB_%I64d_start_balance", login);
+   if(InpStartBalance > 0.0)
+      g_startBalance = InpStartBalance;
+   else if(GlobalVariableCheck(startKey))
+      g_startBalance = GlobalVariableGet(startKey);
+   else
+      g_startBalance = AccountInfoDouble(ACCOUNT_BALANCE);
+   GlobalVariableSet(startKey, g_startBalance);
+   g_haltKey  = StringFormat("ORB_%I64d_%s_halted", login, _Symbol);
+   g_halted   = GlobalVariableCheck(g_haltKey);
+   g_guardDay = 0;
+   ProtectAccount();
 
 //--- trade log
    OpenLog();
@@ -303,6 +345,11 @@ int OnInit()
    if(InpTrailStartR > 0.0)
       PrintFormat("  Trailing from +%.2fR, %.2fR behind price, %.2fR minimum step",
                   InpTrailStartR, InpTrailDistR, InpTrailStepR);
+   PrintFormat("  Protection: start balance %.2f%s, %.2f%% risk below -%.1f%%, daily stop -%.1f%%, hard stop -%.1f%% (0 = off)",
+               g_startBalance, InpStartBalance > 0.0 ? "" : " (remembered)", InpThrottleRisk,
+               InpThrottleBelowPct, InpDailyStopPct, InpHardStopPct);
+   if(g_halted)
+      Print("  HALTED by the hard stop: delete the global variable ", g_haltKey, " to trade again");
 
    UpdatePanel();
    return(INIT_SUCCEEDED);
@@ -341,6 +388,14 @@ void OnDeinit(const int reason)
 //+------------------------------------------------------------------+
 void OnTick()
   {
+//--- account protection first: a halted EA only makes sure it is flat
+   ProtectAccount();
+   if(g_halted)
+     {
+      CloseOurPositions("hard stop");
+      return;
+     }
+
 //--- end-of-day flat exit (cheap no-op when off or already done)
    CloseAtEndOfDay();
 
@@ -491,6 +546,12 @@ void OpenBreakout(const int direction)
      {
       Print("Entry ", DoubleToString(entry, _Digits), " is already beyond the stop ",
             DoubleToString(sl, _Digits), " - trade skipped");
+      return;
+     }
+
+   if(g_dailyStopped)
+     {
+      Print(direction > 0 ? "Long" : "Short", " breakout skipped: the daily loss stop was reached today");
       return;
      }
 
@@ -709,11 +770,94 @@ void CloseAtEndOfDay()
   }
 
 //+------------------------------------------------------------------+
-//| Lot size so that (entry - stop) loses InpRiskPercent of equity   |
+//| Account protection: daily loss stop and hard stop                |
+//+------------------------------------------------------------------+
+void ProtectAccount()
+  {
+   if(g_halted)
+      return;
+   const datetime day = DayStart(TimeCurrent());
+   if(day != g_guardDay)
+     {
+      g_guardDay     = day;
+      g_dayBalance   = DayStartBalance(day);
+      g_dailyStopped = false;
+     }
+   const double equity = AccountInfoDouble(ACCOUNT_EQUITY);
+   if(InpHardStopPct > 0.0 && equity <= g_startBalance * (1.0 - InpHardStopPct / 100.0))
+     {
+      g_halted = true;
+      GlobalVariableSet(g_haltKey, (double)TimeCurrent());
+      const string msg = StringFormat("ORB EA HARD STOP on %s: equity %.2f is %.1f%% below the start %.2f - closing all and halting",
+                                      _Symbol, equity, 100.0 * (1.0 - equity / g_startBalance), g_startBalance);
+      Print(msg);
+      if(!MQLInfoInteger(MQL_TESTER))
+         Alert(msg);
+      CloseOurPositions("hard stop");
+      UpdatePanel();
+      return;
+     }
+   if(InpDailyStopPct > 0.0 && !g_dailyStopped && equity <= g_dayBalance * (1.0 - InpDailyStopPct / 100.0))
+     {
+      g_dailyStopped = true;
+      const string msg = StringFormat("ORB EA daily loss stop on %s: equity %.2f is %.1f%% below today's start %.2f - no new entries today",
+                                      _Symbol, equity, 100.0 * (1.0 - equity / g_dayBalance), g_dayBalance);
+      Print(msg);
+      if(!MQLInfoInteger(MQL_TESTER))
+         Alert(msg);
+      UpdatePanel();
+     }
+  }
+
+//--- balance at the start of the server day: today's closed results taken off the balance
+double DayStartBalance(const datetime day)
+  {
+   double today = 0.0;
+   if(HistorySelect(day, TimeCurrent() + 60))
+      for(int i = HistoryDealsTotal() - 1; i >= 0; i--)
+        {
+         const ulong deal = HistoryDealGetTicket(i);
+         const long type = HistoryDealGetInteger(deal, DEAL_TYPE);
+         if(type != DEAL_TYPE_BUY && type != DEAL_TYPE_SELL)
+            continue;   // deposits and withdrawals are not trading results
+         today += HistoryDealGetDouble(deal, DEAL_PROFIT) + HistoryDealGetDouble(deal, DEAL_COMMISSION)
+                  + HistoryDealGetDouble(deal, DEAL_SWAP) + HistoryDealGetDouble(deal, DEAL_FEE);
+        }
+   return(AccountInfoDouble(ACCOUNT_BALANCE) - today);
+  }
+
+//--- risk per trade, cut by the throttle while equity is well below the start
+double CurrentRiskPercent()
+  {
+   if(InpThrottleBelowPct > 0.0 &&
+      AccountInfoDouble(ACCOUNT_EQUITY) < g_startBalance * (1.0 - InpThrottleBelowPct / 100.0))
+      return(InpThrottleRisk);
+   return(InpRiskPercent);
+  }
+
+//--- close every position of this EA; failures are retried on the next tick
+void CloseOurPositions(const string why)
+  {
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+     {
+      const ulong ticket = PositionGetTicket(i);
+      if(ticket == 0)
+         continue;
+      if(PositionGetString(POSITION_SYMBOL) != _Symbol || PositionGetInteger(POSITION_MAGIC) != (long)InpMagic)
+         continue;
+      if(!trade.PositionClose(ticket))
+         PrintFormat("%s close of #%I64u failed: %u %s", why, ticket, trade.ResultRetcode(),
+                     trade.ResultRetcodeDescription());
+     }
+  }
+
+//+------------------------------------------------------------------+
+//| Lot size so that (entry - stop) loses the current risk % of equity |
 //+------------------------------------------------------------------+
 double CalcLots(const double entry, const double sl)
   {
-   const double riskMoney = AccountInfoDouble(ACCOUNT_EQUITY) * InpRiskPercent / 100.0;
+   const double riskPercent = CurrentRiskPercent();
+   const double riskMoney = AccountInfoDouble(ACCOUNT_EQUITY) * riskPercent / 100.0;
    const double tickValue = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE);   // account currency per tick per lot
    const double tickSize  = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE);
    if(riskMoney <= 0.0 || tickValue <= 0.0 || tickSize <= 0.0)
@@ -736,7 +880,7 @@ double CalcLots(const double entry, const double sl)
    if(lots < minLot)
      {
       PrintFormat("Calculated %s lots is below the minimum %s - using the minimum (risk exceeds %.2f%%)",
-                  DoubleToString(lots, 2), DoubleToString(minLot, 2), InpRiskPercent);
+                  DoubleToString(lots, 2), DoubleToString(minLot, 2), riskPercent);
       lots = minLot;
      }
    if(lots > maxLot)
@@ -1005,6 +1149,13 @@ void UpdatePanel()
                         g_longTaken ? "taken" : "waiting", g_shortTaken ? "taken" : "waiting");
    else
       s += "Today: " + (g_dayStatus == "" ? "waiting for the range candle" : g_dayStatus) + "\n";
+   if(g_halted)
+      s += "HALTED by the hard stop - delete global variable " + g_haltKey + " to trade again\n";
+   else
+      s += StringFormat("Protection: start %.2f  |  risk now %.2f%%  |  daily stop %s  |  hard stop at %.2f\n",
+                        g_startBalance, CurrentRiskPercent(),
+                        g_dailyStopped ? "REACHED" : (InpDailyStopPct > 0.0 ? StringFormat("at %.2f", g_dayBalance * (1.0 - InpDailyStopPct / 100.0)) : "off"),
+                        InpHardStopPct > 0.0 ? g_startBalance * (1.0 - InpHardStopPct / 100.0) : 0.0);
    s += StringFormat("Open positions: %d  |  trades logged this run: %d", CountOurPositions(), g_closedCount);
 
    Comment(s);

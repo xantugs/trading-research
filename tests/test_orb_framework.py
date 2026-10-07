@@ -374,3 +374,47 @@ def test_gap_filter_uses_the_prior_cash_close() -> None:
     assert any(s.session_date == "2023-01-20" for s in find_signals(m1, loose)[0])
     signals, counts = find_signals(m1, tight)
     assert counts["gap_filtered"] > 0 and not any(s.session_date == "2023-01-20" for s in signals)
+
+
+def _losing_long_then_short(extra: list[tuple[str, str, float]] = (), days: int = 1):
+    """A long stopped by a gap to 98 (-1.33R), then a short from 98 that reaches its target."""
+    return _bars([("2023-01-03 09:47", "2023-01-03 09:55", 102.0),
+                  ("2023-01-03 09:55", "2023-01-03 10:10", 98.0),
+                  ("2023-01-03 10:10", "2023-01-04 00:00", 90.0), *extra], days=days)
+
+
+def test_daily_loss_stop_blocks_entries_after_a_bad_start_to_the_day() -> None:
+    m1 = _losing_long_then_short()
+    assert list(backtest(m1, BASE)[0].direction) == ["long", "short"]
+    guarded, diagnostics = backtest(m1, replace(BASE, daily_loss_stop_pct=2.0))
+    assert list(guarded.direction) == ["long"]
+    assert diagnostics["skipped"]["daily_loss_stop"] == 1
+    # the long lost 2.67%, so a 3% stop lets the short through
+    assert len(backtest(m1, replace(BASE, daily_loss_stop_pct=3.0))[0]) == 2
+
+
+def test_risk_throttle_sizes_down_below_the_starting_balance() -> None:
+    m1 = _losing_long_then_short()
+    trades = backtest(m1, replace(BASE, risk_throttle_below_pct=2.0, risk_throttle_percent=0.5))[0]
+    assert list(trades.risk_percent) == [2.0, 0.5]
+    equity = BASE.initial_equity + trades.PnL.iloc[0]
+    assert 0.004 * equity < trades.estimated_risk.iloc[1] <= 0.005 * equity  # lots round down
+
+
+def test_equity_stop_halts_every_later_entry() -> None:
+    m1 = _losing_long_then_short([("2023-01-04 09:47", "2023-01-04 09:55", 102.0),
+                                  ("2023-01-04 09:55", "2023-01-05 00:00", 110.0)], days=2)
+    assert list(backtest(m1, BASE)[0].direction) == ["long", "short", "long"]
+    guarded, diagnostics = backtest(m1, replace(BASE, equity_stop_pct=2.0))
+    assert list(guarded.direction) == ["long"]
+    assert diagnostics["skipped"]["equity_stop"] == 2
+
+
+def test_account_protection_values_validate() -> None:
+    replace(BASE, risk_throttle_below_pct=5.0, risk_throttle_percent=0.25, daily_loss_stop_pct=2.5,
+            equity_stop_pct=8.5).validate()
+    for bad in ({"risk_throttle_percent": 0.25}, {"risk_throttle_below_pct": 5.0},
+                {"risk_throttle_below_pct": 5.0, "risk_throttle_percent": 3.0},
+                {"daily_loss_stop_pct": 0.0}, {"equity_stop_pct": 100.0}):
+        with pytest.raises(ValueError):
+            replace(BASE, **bad).validate()

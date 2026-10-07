@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import heapq
+from dataclasses import replace
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -395,6 +396,27 @@ def _floating_pnl(bar, position: dict, config: Config) -> float:
     return position["direction"] * (close - position["entry"]) * position["lots"] * config.contract_size
 
 
+def _protection(signal: Signal, equity: float, start: float, trades: list[dict], halted: bool,
+                config: Config) -> tuple[str | None, Config]:
+    """The EA's account protection at an entry: a skip reason, or the config to size with."""
+    if halted or (config.equity_stop_pct is not None
+                  and equity <= start * (1 - config.equity_stop_pct / 100)):
+        return "equity_stop", config
+    if config.daily_loss_stop_pct is not None:
+        # The broker day starts at 17:00 New York (00:00 on an NY+7 server).
+        local = signal.signal_close.tz_convert("America/New_York")
+        day_start = local.normalize() + pd.Timedelta(hours=17)
+        if local < day_start:
+            day_start -= pd.Timedelta(days=1)
+        day_balance = start + sum(t["PnL"] for t in trades if t["exit_time"] < day_start)
+        if equity <= day_balance * (1 - config.daily_loss_stop_pct / 100):
+            return "daily_loss_stop", config
+    if (config.risk_throttle_below_pct is not None
+            and equity < start * (1 - config.risk_throttle_below_pct / 100)):
+        return None, replace(config, risk_percent=config.risk_throttle_percent)
+    return None, config
+
+
 def simulate_signals(m1: pd.DataFrame, signals: list[Signal], config: Config,
                      initial_equity: float | None = None):
     """Replay selected signals with a fresh or carried-forward equity balance.
@@ -411,6 +433,7 @@ def simulate_signals(m1: pd.DataFrame, signals: list[Signal], config: Config,
     open_positions: list[tuple[pd.Timestamp, int, dict]] = []
     arrays = PathArrays(m1, config) if signals else None
     session_busy_until: dict[str, pd.Timestamp] = {}
+    halted = False
     for signal in signals:
         # after_close: a session holds at most one position at a time; a breakout while it is
         # still open (including one closing in the entry minute) is not taken.
@@ -426,7 +449,12 @@ def simulate_signals(m1: pd.DataFrame, signals: list[Signal], config: Config,
             equity += sum(_floating_pnl(bar, record, config) for _, _, record in open_positions)
         if equity <= 0:
             raise RuntimeError("simulated account depleted; stop research")
-        record, reason = _one_trade(m1, signal, equity, config, arrays)
+        reason, sized = _protection(signal, equity, start, trades, halted, config)
+        halted = halted or reason == "equity_stop"
+        if reason:
+            skipped[reason] = skipped.get(reason, 0) + 1
+            continue
+        record, reason = _one_trade(m1, signal, equity, sized, arrays)
         if reason:
             skipped[reason] = skipped.get(reason, 0) + 1
             continue

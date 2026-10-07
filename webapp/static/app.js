@@ -5,12 +5,15 @@ const fields = [
   "trail_atr_period", "financing_pct_annual", "risk_percent", "reward_risk",
   "stop_method", "stop_width_multiple", "atr_stop_multiple", "breakout_buffer_atr",
   "initial_equity", "spread_multiplier", "slippage_price", "fallback_spread_price",
-  "commission_per_lot_side", "commission_rate_pct_side"
+  "commission_per_lot_side", "commission_rate_pct_side",
+  "risk_throttle_below_pct", "risk_throttle_percent", "daily_loss_stop_pct", "equity_stop_pct"
 ];
 const textFields = ["session_open", "session_exit", "stop_method", "trade_direction", "position_exit",
                     "trades_per_session", "entry_mode", "or_candle", "flat_time"];
 // A blank box sends null, which switches that rule off.
-const optional = new Set(["or_min_atr", "or_max_atr", "trail_atr_multiple", "flat_time"]);
+const optional = new Set(["or_min_atr", "or_max_atr", "trail_atr_multiple", "flat_time",
+                          "risk_throttle_below_pct", "risk_throttle_percent", "daily_loss_stop_pct",
+                          "equity_stop_pct"]);
 const flatExits = new Set(["end_of_day", "friday_close"]);
 const numeric = new Set(fields.filter(name => !textFields.includes(name)));
 const $ = id => document.getElementById(id);
@@ -151,6 +154,12 @@ function updateChips(form) {
   const trailing = form.trail_atr_multiple != null;
   $("trailChip").textContent = trailing ? `${form.trail_atr_multiple}× ATR from ${form.trail_activation_r}R` : "Off";
   $("trailChip").classList.toggle("on", trailing);
+  const guards = [];
+  if (form.risk_throttle_below_pct != null) guards.push(`${form.risk_throttle_percent}% below −${form.risk_throttle_below_pct}%`);
+  if (form.daily_loss_stop_pct != null) guards.push(`day −${form.daily_loss_stop_pct}%`);
+  if (form.equity_stop_pct != null) guards.push(`stop −${form.equity_stop_pct}%`);
+  $("guardChip").textContent = guards.length ? guards.join(" · ") : "Off";
+  $("guardChip").classList.toggle("on", guards.length > 0);
   const money = Number(form.initial_equity).toLocaleString(undefined, {maximumFractionDigits: 0});
   $("costsChip").textContent = `$${money}${form.financing_pct_annual ? ` · ${form.financing_pct_annual}% financing` : ""}`;
 }

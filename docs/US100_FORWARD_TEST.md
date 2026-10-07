@@ -11,15 +11,41 @@ while it runs.
   unchanged: FTMO `US100.cash`, range 16:30–16:45 broker time (09:30 New York), first
   15-minute close outside it per direction before 19:00 broker (12:00 New York), stop at
   the far side, target 1.5R, held until stop or target.
-- **EA:** [`mt5/ORB_Framework.mq5`](../mt5/ORB_Framework.mq5) v1.30. Its defaults are these
-  rules, and it compiles in MetaEditor with 0 errors and 0 warnings. Leave every input at
-  its default except `InpRiskPercent`.
+- **EA:** [`mt5/ORB_Framework.mq5`](../mt5/ORB_Framework.mq5) v1.40. Its defaults are these
+  rules plus the account protection below, and it compiles in MetaEditor with 0 errors and
+  0 warnings. Leave every input at its default except `InpRiskPercent` and
+  `InpStartBalance`, which should be the account's starting balance (for example 100000).
+  At 0 the EA remembers the balance from when it was first attached.
 - **Two FTMO free-trial accounts**, run side by side: **A at 0.5%** risk per trade (the
   plan's rule) and **B at 1.5%**. Running both at once needs two MT5 installs, for example
   a second portable copy. With `InpLogFile = auto`, each account writes its own
   `ORB_<login>_US100.cash.csv` in the MT5 Common\Files folder.
 - **Uptime:** a VPS or an always-on PC. The EA must be attached to a US100.cash chart
   before 16:30 broker time each trading day.
+
+## Account protection (added 7 October 2026, before the first trade)
+
+v1.40 adds three guards. The Python backtester mirrors them
+(`risk_throttle_below_pct`, `risk_throttle_percent`, `daily_loss_stop_pct`,
+`equity_stop_pct`), and they are in the dashboard's US100 presets.
+
+| Guard | Default | What it does |
+|---|---|---|
+| Risk throttle | 0.25% risk below −5% | Risk per trade drops to 0.25% while equity is more than 5% below the starting balance, and returns to normal once it recovers |
+| Daily loss stop | −2.5% | No new entries for the rest of the broker day once equity is 2.5% below the day's starting balance |
+| Hard stop | −8.5% | Closes every position of the EA and stops trading, with an alert, once equity is 8.5% below the starting balance. The halt survives restarts; delete the global variable `ORB_<login>_US100.cash_halted` (F3) to resume |
+
+**Effect on the backtest:** none. From $100k in October 2021, equity never fell more than
+1.4% below the start, and no day lost 2.5%, so all 1,390 trades are unchanged. The guards
+matter in the bad paths. In a one-year day-block bootstrap of the backtest trades at 0.5%
+risk, the chance of reaching FTMO's −10% limit falls from 6.5% to 1.9% with the throttle.
+If the edge were zero, it falls from 29.9% to 16.2%. Growth is almost unchanged: the
+median year is +11.0% vs +11.3%.
+
+**Parity:** the backtest checks the guards at each entry. The EA checks them on every
+tick, and also closes its positions at the hard stop, so live trading can stop slightly
+earlier than the backtest on the same path. The EA's day starts at midnight server time,
+which is 17:00 New York.
 
 ## Monthly check
 
@@ -77,6 +103,8 @@ Either of these ends that account's test; the other account carries on:
   measured from closed balance. That is worse than anything in five years of backtest.
 - The account breaches FTMO's 5% daily or 10% total loss limit. For account B this is
   recorded as information, since its pass chance was only about 50%.
+- The EA's own hard stop fires at −8.5% from the starting balance. This comes before
+  both drawdown stops above, so in practice it is the one that ends a test.
 
 ### 5. What does not change
 
