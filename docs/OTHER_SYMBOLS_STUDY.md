@@ -96,3 +96,14 @@ written**.
 
 By the one-round rule, no symbol is re-tried with other settings, and no rule is adapted
 to the 09:35 open.
+
+## Addendum: US30 (7 October 2026)
+
+A later download request for `US30.cash` succeeded: 1,754,025 M1 bars from 2021-10. The
+earlier failure was temporary. US30 was run under the same rules and the same amended cost
+rule, with a constant spread of 2.10. **It fails:** 2021-10 to 2024 is −0.050R (t −1.22,
+862 trades), and 2025-01 to 2026-10 is +0.019R (474). The verdict stands: no symbol
+passes.
+
+Daily R correlation of the frozen rules, 2021-10 to 2026-10: US100–US500 0.59,
+US100–US30 0.27, US30–US500 0.42.
