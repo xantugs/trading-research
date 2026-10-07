@@ -332,3 +332,45 @@ def test_holdout_opens_only_with_a_dated_record() -> None:
     opened.validate()
     assert "not out-of-sample" in holdout_note(opened) and "2026-10-06" in holdout_note(opened)
     assert BASE.holdout_opened == "2026-10-06" and BASE.development_end == "2026-09-17"
+
+
+# --- Tweak study features --------------------------------------------------------------
+
+def test_breakeven_moves_the_stop_to_entry() -> None:
+    # Long 102 (stop 99, target 106.5); 105.25 reaches +1R (105), then price falls to 101.
+    m1 = _bars([("2023-01-03 09:47", "2023-01-03 10:00", 102.0),
+                ("2023-01-03 10:00", "2023-01-03 10:30", 105.25),
+                ("2023-01-03 10:30", "2023-01-05 00:00", 101.0)], days=2)
+    config = replace(BASE, trades_per_session="one", breakeven_r=1.0)
+    trade = backtest(m1, config)[0].iloc[0]
+    assert trade.exit_reason.startswith("breakeven_stop") and trade.exit == pytest.approx(101.0)
+    assert trade.exit_time == _local("2023-01-03", "10:30")  # opens below the moved stop: a gap fill
+    # Without it the trade rides to the original 99 stop. The flat 101 segment also covers
+    # 4 Jan's range, so the first touch of 99 is the 5 Jan opening range.
+    plain = backtest(m1, replace(config, breakeven_r=None))[0].iloc[0]
+    assert plain.exit_reason.startswith("stop") and plain.exit == pytest.approx(99.0)
+    assert plain.exit_time.tz_convert("America/New_York").date().isoformat() == "2023-01-05"
+    with pytest.raises(ValueError):
+        replace(config, trail_atr_multiple=1.0).validate()
+
+
+def test_trend_filter_keeps_only_the_trend_direction() -> None:
+    # Daily closes 100 (3 Jan) then 110 (4 Jan): on 5 Jan the prior close is above its 2-day
+    # average, so only longs are allowed and that day's short breakout is dropped.
+    m1 = _bars([("2023-01-04 12:00", "2023-01-05 09:00", 110.0),
+                ("2023-01-05 09:47", "2023-01-05 12:00", 98.0)], days=3)
+    shorts = [s for s in find_signals(m1, BASE)[0] if s.session_date == "2023-01-05"]
+    assert [s.direction for s in shorts] == [-1]
+    signals, counts = find_signals(m1, replace(BASE, trend_sma_days=2))
+    assert [s for s in signals if s.session_date == "2023-01-05"] == []
+
+
+def test_gap_filter_uses_the_prior_cash_close() -> None:
+    # Every day: 16:00 price 100, next open 99 -> a gap of 1 against a daily ATR of 2.
+    m1 = _bars([("2023-01-20 09:47", "2023-01-20 12:00", 102.0)], days=18, start_day="2023-01-02")
+    loose = replace(BASE, trades_per_session="one", gap_max_atr=1.0)
+    tight = replace(loose, gap_max_atr=0.25)
+    assert find_signals(m1, loose)[1]["gap_filtered"] == 0
+    assert any(s.session_date == "2023-01-20" for s in find_signals(m1, loose)[0])
+    signals, counts = find_signals(m1, tight)
+    assert counts["gap_filtered"] > 0 and not any(s.session_date == "2023-01-20" for s in signals)

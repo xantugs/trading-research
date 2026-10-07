@@ -70,6 +70,14 @@ class Config:
     # Overnight financing: annual % of entry notional per night held (17:00 New York rollovers,
     # counted in calendar nights so a weekend is three).
     financing_pct_annual: float = 0.0
+    # Tweak-study filters and exits (null disables each one):
+    # trade only in the direction of the prior day's close vs its N-day simple average;
+    trend_sma_days: int | None = None
+    # skip a session whose open gaps more than this x prior daily ATR(14) from the price at
+    # 16:00 New York on the previous weekday (the cash close);
+    gap_max_atr: float | None = None
+    # move the stop to the entry price once price has reached this many R in profit.
+    breakeven_r: float | None = None
     # How cached MT5 bar timestamps are decoded. "stored_as_utc" is the historical behaviour
     # (MT5 epoch seconds taken as UTC); "new_york_plus_7" decodes a broker clock that runs at
     # New York time + 7 h year-round, which is what the FTMO-Demo XAUUSD cache actually holds.
@@ -184,6 +192,15 @@ class Config:
             raise ValueError("trail_activation_r must be nonnegative")
         if type(self.trail_atr_period) is not int or self.trail_atr_period < 1:
             raise ValueError("trail_atr_period must be a positive integer")
+        if self.trend_sma_days is not None and (type(self.trend_sma_days) is not int or self.trend_sma_days < 2):
+            raise ValueError("trend_sma_days must be an integer of at least 2")
+        if self.gap_max_atr is not None and float(self.gap_max_atr) <= 0:
+            raise ValueError("gap_max_atr must be positive")
+        if self.breakeven_r is not None:
+            if float(self.breakeven_r) <= 0:
+                raise ValueError("breakeven_r must be positive")
+            if self.trail_atr_multiple is not None:
+                raise ValueError("breakeven_r and a trailing stop cannot be combined")
         if self.financing_pct_annual < 0:
             raise ValueError("financing_pct_annual must be nonnegative")
 

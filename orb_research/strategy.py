@@ -106,7 +106,14 @@ def find_signals(m1: pd.DataFrame, config: Config):
               "incomplete_signal_bar": 0, "missing_atr": 0, "narrow_range": 0, "late_breakout": 0,
               "range_atr_filtered": 0, "range_candle_filtered": 0}
     needs_atr = (config.breakout_buffer_atr > 0 or config.stop_method == "atr"
-                 or config.min_or_width_atr is not None)
+                 or config.min_or_width_atr is not None or config.gap_max_atr is not None)
+    trend = None
+    if config.trend_sma_days is not None:
+        # Prior completed day's close against the average of the N closes up to it.
+        daily_close = m1.close.resample("1D").last().dropna()
+        trend = pd.DataFrame({"close": daily_close.shift(1),
+                              "sma": daily_close.rolling(config.trend_sma_days).mean().shift(1)})
+    counts.update({"trend_filtered": 0, "gap_filtered": 0})
     # Held positions follow the EA cutoff hour: nothing that completes at the cutoff is traded.
     # Session-exit mode keeps the original rule (a close at the exit time is still a signal).
     held = config.position_exit != "session_exit"
@@ -148,6 +155,22 @@ def find_signals(m1: pd.DataFrame, config: Config):
                     or (config.or_max_atr is not None and high - low > config.or_max_atr * intraday)):
                 counts["range_atr_filtered"] += 1
                 continue
+        if config.gap_max_atr is not None:
+            previous = day - timedelta(days=3 if day.weekday() == 0 else 1)
+            prior_close_at = pd.Timestamp(datetime.combine(previous, datetime.strptime("16:00", "%H:%M").time(),
+                                                           zone)).tz_convert("UTC") - timedelta(minutes=1)
+            prior_close = float(m1.close.asof(prior_close_at)) if prior_close_at >= m1.index[0] else np.nan
+            gap = abs(float(opening.open.iloc[0]) - prior_close)
+            if not np.isfinite(gap) or gap > config.gap_max_atr * prior_atr:
+                counts["gap_filtered"] += 1
+                continue
+        allowed_trend = None
+        if trend is not None:
+            row = trend.loc[day_key] if day_key in trend.index else None
+            if row is None or not np.isfinite(row.sma) or not np.isfinite(row.close) or row.close == row.sma:
+                counts["trend_filtered"] += 1
+                continue
+            allowed_trend = 1 if row.close > row.sma else -1
         if config.or_candle != "any":
             bullish = float(opening.close.iloc[-1]) > float(opening.open.iloc[0])
             if bullish != (config.or_candle == "bullish"):
@@ -165,6 +188,8 @@ def find_signals(m1: pd.DataFrame, config: Config):
             window = entry_bars.loc[first_bar - timedelta(minutes=config.signal_minutes):last_bar]
             candidates = _close_breakouts(window, first_bar, high + buffer, low - buffer, config, counts)
         open_directions = set(ALLOWED_DIRECTIONS[config.trade_direction])
+        if allowed_trend is not None:
+            open_directions &= {allowed_trend}
         found = False
         for bar_time, direction, price in candidates:
             if direction not in open_directions:

@@ -151,6 +151,44 @@ def _trail_until_exit(arrays: PathArrays, start: int, limit: int | None, directi
     return None, "open_at_data_end"
 
 
+def _breakeven_until_exit(arrays: PathArrays, start: int, limit: int | None, direction: int,
+                          entry: float, stop: float, target: float, distance: float, config: Config):
+    """Walk M1 bars with a fixed target and a stop that moves to the entry price once a bar
+    reaches breakeven_r x the initial risk.  Within a bar the stop and target are checked
+    first (stop before target, as everywhere else); the move applies from the next bar.
+    """
+    trigger = entry + direction * config.breakeven_r * distance
+    moved = False
+    mae = mfe = 0.0
+    slip = config.slippage_price
+    end = len(arrays.open) if limit is None else min(limit, len(arrays.open))
+    for i in range(start, end):
+        spread = 0.0 if direction == 1 else arrays.spread[i]
+        opening, high, low = arrays.open[i] + spread, arrays.high[i] + spread, arrays.low[i] + spread
+        reason = "breakeven_stop" if moved else "stop"
+        if direction * (opening - stop) <= 0:
+            return (arrays.index[i], opening - direction * slip, reason + "_gap", False, mae, mfe), None
+        if direction * (opening - target) >= 0:
+            return (arrays.index[i], target - direction * slip, "target_gap", False, mae, mfe), None
+        favorable = (high - entry) if direction == 1 else (entry - low)
+        adverse = (entry - low) if direction == 1 else (high - entry)
+        stop_hit = (low <= stop) if direction == 1 else (high >= stop)
+        target_hit = (high >= target) if direction == 1 else (low <= target)
+        if stop_hit:
+            mae = max(mae, max(0.0, direction * (entry - stop)) / distance)
+            return (arrays.index[i], stop - direction * slip, reason, target_hit, mae, mfe), None
+        if target_hit:
+            return (arrays.index[i], target - direction * slip, "target", False, mae,
+                    max(mfe, max(0.0, favorable) / distance)), None
+        mae, mfe = max(mae, max(0.0, adverse) / distance), max(mfe, max(0.0, favorable) / distance)
+        if not moved and ((high >= trigger) if direction == 1 else (low <= trigger)):
+            stop, moved = entry, True
+    if limit is not None and limit < len(arrays.open):
+        return (arrays.index[limit], _time_exit(arrays, limit, direction, config), "time", False,
+                mae, mfe), None
+    return None, "open_at_data_end"
+
+
 def _exit_by_session_end(m1: pd.DataFrame, signal: Signal, entry_time, entry: float, stop: float,
                          target: float, distance: float, config: Config):
     """Walk M1 bars until stop, target or the session_exit flat time."""
@@ -281,7 +319,7 @@ def _one_trade(m1: pd.DataFrame, signal: Signal, equity: float, config: Config,
         start = position + 1
     if result is None:
         limit_time = _flat_time_limit(signal, config)
-        if config.position_exit == "session_exit" and not trailing:
+        if config.position_exit == "session_exit" and not trailing and config.breakeven_r is None:
             if start >= len(m1):
                 return None, "incomplete_exit_path"
             result, reason = _exit_by_session_end(m1, signal, m1.index[start], entry, stop, target,
@@ -291,6 +329,9 @@ def _one_trade(m1: pd.DataFrame, signal: Signal, equity: float, config: Config,
             if trailing:
                 result, reason = _trail_until_exit(arrays, start, limit, signal.direction, entry,
                                                    stop, distance, config)
+            elif config.breakeven_r is not None:
+                result, reason = _breakeven_until_exit(arrays, start, limit, signal.direction, entry,
+                                                       stop, target, distance, config)
             else:
                 result, reason = _hold_until_exit(arrays, m1, start, limit, signal.direction, entry,
                                                   stop, target, distance, config)
