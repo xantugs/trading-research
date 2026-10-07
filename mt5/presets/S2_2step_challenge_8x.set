@@ -1,0 +1,6 @@
+; S2 FTMO 2-Step challenge, fast size from docs/S2_FTMO_SIZING.md (10k plan): 8x
+InpLeverage=8.0
+InpDailyStopPct=4.5
+InpHardStopPct=9.5
+InpTrailingHardStop=false
+InpNewsFilter=false

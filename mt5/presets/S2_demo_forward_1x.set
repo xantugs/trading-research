@@ -1,0 +1,6 @@
+; S2 demo forward test: 1x, guards on
+InpLeverage=1.0
+InpDailyStopPct=4.5
+InpHardStopPct=9.5
+InpTrailingHardStop=false
+InpNewsFilter=false

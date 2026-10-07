@@ -76,3 +76,14 @@ def test_s2_follows_another_markets_session_and_time_zone() -> None:
     final = s2_noise_area(close, spread, first, slip=0.0).iloc[-1]
     # long at the 17:00 checkpoint (101), flat at the 17:30 close (103)
     assert final.trades == 1 and final.ret == pytest.approx(2.0 / 101.0)
+
+
+def test_s2_can_list_each_trade_for_reconciliation() -> None:
+    days = pd.bdate_range("2023-01-02", periods=16)
+    quiet = [_day_bars(d.date().isoformat(), {}, 100.0) for d in days[:15]]
+    last = _day_bars(days[15].date().isoformat(), {"11:00": 102.0}, 100.0)
+    m1 = pd.concat([*quiet, last])
+    close, spread, first = session_grid(m1, np.zeros(len(m1)))
+    trades: list = []
+    s2_noise_area(close, spread, first, slip=0.0, record=trades)
+    assert [(t["direction"], t["entry_minute"], t["exit_minute"]) for t in trades] == [(1, 690, 960)]

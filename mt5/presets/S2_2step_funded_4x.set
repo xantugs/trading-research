@@ -1,0 +1,6 @@
+; S2 FTMO 2-Step funded (Standard: news filter on): 4x
+InpLeverage=4.0
+InpDailyStopPct=4.5
+InpHardStopPct=9.5
+InpTrailingHardStop=false
+InpNewsFilter=true

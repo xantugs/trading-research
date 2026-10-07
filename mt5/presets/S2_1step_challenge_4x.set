@@ -1,0 +1,6 @@
+; S2 FTMO 1-Step challenge: 4x, 3% daily limit so stop at 2.5%, trailing max loss
+InpLeverage=4.0
+InpDailyStopPct=2.5
+InpHardStopPct=9.5
+InpTrailingHardStop=true
+InpNewsFilter=false

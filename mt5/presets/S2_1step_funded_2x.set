@@ -1,0 +1,6 @@
+; S2 FTMO 1-Step funded: 2x, trailing max loss, news filter on
+InpLeverage=2.0
+InpDailyStopPct=2.5
+InpHardStopPct=9.5
+InpTrailingHardStop=true
+InpNewsFilter=true

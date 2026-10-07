@@ -62,7 +62,7 @@ def s1_last_half_hour(close: pd.DataFrame, spread: pd.DataFrame, slip: float = 0
 
 
 def s2_noise_area(close: pd.DataFrame, spread: pd.DataFrame, first_open: pd.Series,
-                  slip: float = 0.1, lookback: int = 14) -> pd.DataFrame:
+                  slip: float = 0.1, lookback: int = 14, record: list | None = None) -> pd.DataFrame:
     """The session comes from the grid's columns: checkpoints every 30 minutes from the open
     + 30 to the close - 30, and everything flat at the close."""
     session_open, session_close = int(close.columns[0]), int(close.columns[-1]) + 1
@@ -82,7 +82,7 @@ def s2_noise_area(close: pd.DataFrame, spread: pd.DataFrame, first_open: pd.Seri
         upper = max(open_, prev) * (1 + sigma[i])
         lower = min(open_, prev) * (1 - sigma[i])
         row_close, row_spread = close.iloc[i].to_numpy(), spread.iloc[i].to_numpy()
-        position, entry, s_entry, total, trades, worst, start_col = 0, 0.0, 0.0, 0.0, 0, 0.0, 0
+        position, entry, s_entry, total, trades, worst, start_col, entry_minute = 0, 0.0, 0.0, 0.0, 0, 0.0, 0, 0
 
         def marked_low(end_col: int) -> float:
             """Lowest day P/L while the open position ran: realized so far plus its exit value
@@ -100,14 +100,22 @@ def s2_noise_area(close: pd.DataFrame, spread: pd.DataFrame, first_open: pd.Seri
                 continue
             if (position > 0 and price <= upper[k]) or (position < 0 and price >= lower[k]):
                 worst = min(worst, marked_low(minute - 1 - session_open))
-                total += _fill(position, entry, price, s_entry, s_now, slip)
+                ret = _fill(position, entry, price, s_entry, s_now, slip)
+                total += ret
+                if record is not None:
+                    record.append({"date": day, "direction": position, "entry_minute": entry_minute,
+                                   "entry": entry, "exit_minute": minute, "exit": price, "ret": ret})
                 position = 0
             if position == 0 and (price > upper[k] or price < lower[k]):
                 position, entry, s_entry, trades = (1 if price > upper[k] else -1), price, s_now, trades + 1
-                start_col = minute - 1 - session_open
+                start_col, entry_minute = minute - 1 - session_open, minute
         if position:
             worst = min(worst, marked_low(session_close - 1 - session_open))
-            total += _fill(position, entry, last, s_entry, s_last, slip)
+            ret = _fill(position, entry, last, s_entry, s_last, slip)
+            total += ret
+            if record is not None:
+                record.append({"date": day, "direction": position, "entry_minute": entry_minute,
+                               "entry": entry, "exit_minute": session_close, "exit": last, "ret": ret})
         rows.append({"date": day, "direction": 0, "trades": trades, "ret": total, "worst": min(worst, total)})
     return (pd.DataFrame(rows).set_index("date") if rows
             else pd.DataFrame(columns=["direction", "trades", "ret", "worst"]))
