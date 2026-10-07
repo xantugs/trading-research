@@ -152,3 +152,23 @@ The user asked for more risk and can afford a $10k account. The same lifecycle i
 The choice rule is unchanged: the highest mean net per month under the development edge,
 reported with the holdout and zero-edge cases. At these sizes, one 0.4–0.6% adverse move
 can breach a daily limit, so the minute-bar understatement of breaches matters more.
+
+### $10k riskier-grid results (`outputs/s2_sizing/lifecycle_10k_risky.csv`)
+
+| Plan | Scenario | Mean net per month | Median per month | First payout (months) | Below zero after 12 months |
+|---|---|---|---|---|---|
+| **2-Step, Lc 8×, Lf 4× (chosen)** | development | **+$54** | +$43 | 4.7 | 38% |
+| | holdout | +$89 | +$68 | 3.9 | 37% |
+| | zero edge | −$109 | −$137 | 5.4 | 83% |
+| 2-Step, Lc 4×, Lf 3× (for comparison) | development | +$39 | +$15 | 6.1 | 42% |
+| | holdout | +$101 | | | |
+| | zero edge | −$18 | −$45 | | |
+| **1-Step, Lc 4×, Lf 2× (chosen)** | development | **+$33** | +$27 | 4.9 | 36% |
+| | holdout | +$62 | +$54 | 4.0 | 33% |
+| | zero edge | −$47 | −$63 | 5.3 | 74% |
+
+**Reading.**
+- On $10k, the fees are a larger share of the payouts. The extra risk adds a little when
+  the edge is real (+$54 against +$39 a month), but costs a lot when it is not (−$109
+  against −$18 a month, roughly 15 failed challenges a year).
+- 1-Step gains little above 3–4×, because its 3% daily limit binds first.
