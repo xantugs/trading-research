@@ -47,3 +47,18 @@ It is reported, not used to choose.
 
 **One round only.** No rule changes, no per-symbol settings, and no second list after
 seeing the results. A symbol that fails is not re-tried with other settings.
+
+## Amendment 1 (7 October 2026, after the download, before any strategy result)
+
+The cost rule above cannot be applied. For most stocks the broker's M1 spread field is
+zero on every bar until 2026 (AMD and BA, for example). Where it is filled, it is far
+lower before 2025 than after: AAPL shows 2 cents through 2024 and 10 cents from 2025.
+So the rule now is: **every bar of every symbol is charged one constant spread, the
+median non-zero recorded spread between 09:30 and 12:00 New York from 7 April to
+6 October 2026**, the most recent six months. Recorded spreads are otherwise ignored.
+Slippage stays at 10% of that spread per fill, at least one tick. This charges today's
+costs to every year, which is conservative where earlier spreads were lower. A symbol
+with no recorded spread in those six months is excluded. Nothing else changes.
+
+`US30.cash` is excluded: the broker fails every M1 history request for it
+("Terminal: Call failed"), so it has no data.

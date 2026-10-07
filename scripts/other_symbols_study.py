@@ -39,6 +39,7 @@ NY = "America/New_York"
 FORWARD = pd.Timestamp("2025-01-01", tz=NY)
 FORWARD_END = pd.Timestamp("2026-10-07", tz=NY)
 LATEST_START = pd.Timestamp("2023-02-01", tz="UTC")
+RECENT = pd.Timestamp("2026-04-07", tz=NY)
 
 
 def _config_path(symbol: str) -> Path:
@@ -90,7 +91,7 @@ def download() -> int:
                 break
             # Months are written in order, so the failing one is the first without a sidecar.
             months = pd.period_range(config.start, pd.Timestamp(END) - pd.Timedelta(days=1), freq="M")
-            missing = [f"{m:%Y-%m}" for m in months if not (cache / f"{m:%Y%m}.json").exists()]
+            missing = [m.strftime("%Y-%m") for m in months if not (cache / m.strftime("%Y%m.json")).exists()]
             if not missing or missing[0] in accepted:
                 log[config.symbol] = {"status": "failed", "error": err.getvalue().strip()}
                 break
@@ -111,17 +112,23 @@ def _stats(r: pd.Series) -> dict:
 
 def _one(path: str) -> dict:
     config = load_config(path)
-    m1, _ = load_m1(config)
+    try:
+        m1, _ = load_m1(config)
+    except (OSError, RuntimeError, ValueError) as exc:
+        return {"symbol": config.symbol, "excluded": f"no M1 data: {exc}"[:200]}
     first = m1.index.min()
     row = {"symbol": config.symbol, "first_bar": first.isoformat()}
     if first >= LATEST_START:
         return {**row, "excluded": "history starts after 2023-01"}
     local = m1.index.tz_convert(NY)
     minutes = local.hour * 60 + local.minute
-    window = (minutes >= 570) & (minutes < 720) & (local < FORWARD) & (m1.spread.to_numpy() > 0)
+    # Amendment 1 (docs): one constant spread on every bar, the median recorded 09:30-12:00
+    # New York spread over the last six cached months; recorded spreads are ignored.
+    window = (minutes >= 570) & (minutes < 720) & (local >= RECENT) & (m1.spread.to_numpy() > 0)
     median_spread = float(m1.spread[window].median()) * config.point
     if not math.isfinite(median_spread):
-        return {**row, "excluded": "no recorded spread"}
+        return {**row, "excluded": "no recorded spread in the last six months"}
+    m1 = m1.assign(spread=0)
     costs = {"fallback_spread_price": median_spread,
              "slippage_price": max(config.point, 0.1 * median_spread)}
     config = replace(config, **costs)
@@ -157,8 +164,9 @@ def run(workers: int) -> int:
                 print(f"{row['symbol']:12s} excluded: {row['excluded']}", flush=True)
             else:
                 b, f = row["backtest"], row["forward"]
+                fwd = "none" if f["mean_r"] is None else f"{f['mean_r']:+.3f}R"
                 print(f"{row['symbol']:12s} backtest {b['mean_r']:+.3f}R t={b['t']:+.2f} ({b['trades']})  "
-                      f"forward {f['mean_r']:+.3f}R ({f['trades']})  passed: {row['passed']}", flush=True)
+                      f"forward {fwd} ({f['trades']})  passed: {row['passed']}", flush=True)
     rows.sort(key=lambda r: r["symbol"])
     tested = [r for r in rows if "excluded" not in r]
     pooled = pd.concat([pd.read_csv(OUT / f"trades_{r['symbol']}.csv") for r in tested])
