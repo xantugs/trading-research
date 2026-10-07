@@ -1,0 +1,73 @@
+# S2 on a basket of markets: plan (8 October 2026)
+
+Written and committed **before** S2 has been run on any market other than the Nasdaq-100.
+
+**Aim.** Make S2's daily results steadier by trading it on several markets at once. The
+goal is a positive edge with more winning days, more weeks with at least 3 winning days,
+and more winning months than S2 on one market. The research basis is intraday momentum
+found across 60+ futures markets (Baltussen et al., 2021) and in 16 equity markets out of
+sample (Li, Sakkas & Urquhart, 2022). See the summary in this branch's chat record.
+
+**S2 unchanged:**
+- 14-day noise area;
+- checkpoints every 30 minutes from the session open + 30 minutes to the close − 30
+  minutes;
+- flat at the session close;
+- costs as before.
+
+## Markets and sessions (local exchange time; fixed now)
+
+| HistData | FTMO | Market | Session |
+|---|---|---|---|
+| NSXUSD | US100.cash | Nasdaq-100 | 09:30–16:00 New York |
+| SPXUSD | US500.cash | S&P 500 | 09:30–16:00 New York |
+| GRXEUR | GER40.cash | DAX 40 | 09:00–17:30 Berlin |
+| UKXGBP | UK100.cash | FTSE 100 | 08:00–16:30 London |
+| JPXJPY | JP225.cash | Nikkei 225 | 09:00–15:00 Tokyo |
+| XAUUSD | XAUUSD | Gold (COMEX day session) | 08:20–13:30 New York |
+| WTIUSD | USOIL.cash | WTI crude (NYMEX day session) | 09:00–14:30 New York |
+
+**Clock check, before any strategy run.** HistData's Nasdaq stamps were New York wall time
+with daylight saving, and every market is read the same way. A market is dropped if its
+largest 1-minute volatility jump around the open is not within ±2 minutes of its session
+open in both seasons, in most years from 2010 to 2024. This check uses absolute price
+moves only.
+
+**Costs.**
+- **Spread:** for each market, FTMO's median recorded spread ÷ price, 2025-01 to 2026-10,
+  inside the session, applied to every HistData bar's close.
+- **Slippage:** 10% of the spread per fill.
+- **Holdout B:** uses FTMO's recorded spreads.
+
+## Periods
+
+- **Development:** HistData, 2010-11 to 2017-12.
+- **Holdout A:** HistData, 2018–2024.
+- **Holdout B:** FTMO, 2025-01 to 2026-10.
+
+Nasdaq-100's holdout A result is already known: it passed. It stays in the basket, so the
+basket's holdout A is not fully unseen. Its six other markets are.
+
+## Rules
+
+1. **Market gate, on development only.** A market joins the basket if its development
+   mean daily return is above 0.
+2. **Weights.** Each basket market is weighted by 1 ÷ its development daily standard
+   deviation, so each carries equal risk. The weights are scaled so that the basket's
+   development daily standard deviation equals the Nasdaq-100's, which keeps the FTMO
+   leverage tables comparable. The basket's daily return is the weighted sum; a market
+   with no session that day contributes 0.
+3. **Holdout A pass (basket):**
+   - mean daily return above 0 with **t ≥ 2.3**;
+   - at least 6 of the 7 years positive.
+4. **Holdout B:** basket mean > 0 confirms. If it is below 0, the result is "not
+   confirmed".
+5. **Reported for the user's goal, not used to choose:**
+   - winning days, as a share of days with a trade;
+   - weeks with at least 3 winning days;
+   - winning months;
+   - dollars per day for a $10k account at 1×, 2× and 4×.
+
+   Each is given for the basket and for each market.
+6. **One run per holdout.** No market is added or removed, and no weight changed, after
+   any holdout result.

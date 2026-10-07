@@ -59,6 +59,8 @@ def parse_args(argv=None):
                         help="Exclusive UTC end date (default: today, so current day is omitted)")
     parser.add_argument("--terminal-path", help="Path to the intended terminal64.exe")
     parser.add_argument("--refresh", action="store_true", help="Re-fetch even verified cached months")
+    parser.add_argument("--prices-only", action="store_true",
+                        help="Allow a non-USD symbol: the cache is for %%-return studies, not money sizing")
     parser.add_argument("--accept-gap", action="append", default=[], metavar="YYYY-MM",
                         help="Accept this month despite missing weekdays (a known broker gap); "
                              "the missing days are recorded in its manifest entry")
@@ -91,7 +93,7 @@ def main(argv=None) -> int:
         if not initialized:
             raise RuntimeError(f"MT5 initialization failed: {mt5.last_error()}")
         try:
-            provenance = _inspect_terminal(mt5, config)
+            provenance = _inspect_terminal(mt5, config, prices_only=args.prices_only)
             if existing_source and any(existing_source.get(key) != provenance.get(key)
                                        for key in ("server", "symbol", "point", "contract_size",
                                                    "tick_size", "volume_step", "chart_mode")):

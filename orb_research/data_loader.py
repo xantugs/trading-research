@@ -97,7 +97,7 @@ def _from_mt5_array(rates) -> pd.DataFrame:
     return frame[list(BAR_COLUMNS)]
 
 
-def _inspect_terminal(mt5, config: Config) -> dict:
+def _inspect_terminal(mt5, config: Config, *, prices_only: bool = False) -> dict:
     account = mt5.account_info()
     terminal = mt5.terminal_info()
     if account is None or terminal is None or not terminal.connected:
@@ -128,10 +128,12 @@ def _inspect_terminal(mt5, config: Config) -> dict:
         )
     if info.chart_mode != mt5.SYMBOL_CHART_MODE_BID:
         raise RuntimeError(f"research engine requires Bid-based {config.symbol} bars; broker chart mode is Last")
-    if account.currency != "USD" or info.currency_profit != "USD":
+    # Price-only caches (studies that measure returns in % of price) may hold non-USD symbols;
+    # the ORB engine's money sizing needs USD P/L, so it never reads them without this check.
+    if not prices_only and (account.currency != "USD" or info.currency_profit != "USD"):
         raise RuntimeError("research sizing requires a USD account and USD symbol P/L")
     expected_tick_value = info.trade_tick_size * info.trade_contract_size
-    if not np.isclose(info.trade_tick_value, expected_tick_value, rtol=0.01):
+    if not prices_only and not np.isclose(info.trade_tick_value, expected_tick_value, rtol=0.01):
         raise RuntimeError(
             f"broker tick value {info.trade_tick_value} does not match "
             f"tick size x contract size {expected_tick_value}"
@@ -142,7 +144,7 @@ def _inspect_terminal(mt5, config: Config) -> dict:
         "tick_size": info.trade_tick_size, "tick_value": info.trade_tick_value,
         "volume_min": info.volume_min, "volume_step": info.volume_step,
         "volume_max": info.volume_max, "terminal_path": terminal.path,
-        "chart_mode": "bid",
+        "chart_mode": "bid", "prices_only": prices_only, "profit_currency": info.currency_profit,
         "clock": "MT5 epoch seconds as delivered (server clock, labelled UTC; see broker_clock)",
     }
 
