@@ -20,19 +20,22 @@ OPEN, CLOSE = 570, 960            # 09:30 and 16:00 as minutes of the day
 CHECKPOINTS = tuple(range(600, 931, 30))  # 10:00 ... 15:30
 
 
-def session_grid(m1: pd.DataFrame, spread_price: np.ndarray):
-    """Day x minute tables of close and spread for 09:30-16:00, plus each day's 09:30 open."""
-    local = m1.index.tz_convert(NY)
+def session_grid(m1: pd.DataFrame, spread_price: np.ndarray, zone: str = NY,
+                 open_minute: int = OPEN, close_minute: int = CLOSE):
+    """Day x minute tables of close and spread for one session in its exchange's local time
+    (09:30-16:00 New York by default), plus each day's opening-minute open."""
+    local = m1.index.tz_convert(zone)
     minute = local.hour * 60 + local.minute
-    keep = (minute >= OPEN) & (minute < CLOSE)
+    keep = (minute >= open_minute) & (minute < close_minute)
     day = pd.Index(local.date[keep], name="date")
     frame = pd.DataFrame({"date": day, "minute": minute[keep], "open": m1.open.to_numpy()[keep],
                           "close": m1.close.to_numpy()[keep], "spread": spread_price[keep]})
-    close = frame.pivot(index="date", columns="minute", values="close").reindex(columns=range(OPEN, CLOSE))
-    spread = frame.pivot(index="date", columns="minute", values="spread").reindex(columns=range(OPEN, CLOSE))
+    columns = range(open_minute, close_minute)
+    close = frame.pivot(index="date", columns="minute", values="close").reindex(columns=columns)
+    spread = frame.pivot(index="date", columns="minute", values="spread").reindex(columns=columns)
     # A missing minute takes the last price at most five minutes old; older gaps stay empty.
     close, spread = close.ffill(axis=1, limit=5), spread.ffill(axis=1, limit=5)
-    first = frame[frame.minute == OPEN].set_index("date").open.reindex(close.index)
+    first = frame[frame.minute == open_minute].set_index("date").open.reindex(close.index)
     return close, spread, first
 
 
@@ -60,12 +63,16 @@ def s1_last_half_hour(close: pd.DataFrame, spread: pd.DataFrame, slip: float = 0
 
 def s2_noise_area(close: pd.DataFrame, spread: pd.DataFrame, first_open: pd.Series,
                   slip: float = 0.1, lookback: int = 14) -> pd.DataFrame:
-    prices = close[[c - 1 for c in CHECKPOINTS]].to_numpy()
+    """The session comes from the grid's columns: checkpoints every 30 minutes from the open
+    + 30 to the close - 30, and everything flat at the close."""
+    session_open, session_close = int(close.columns[0]), int(close.columns[-1]) + 1
+    checkpoints = tuple(range(session_open + 30, session_close - 29, 30))
+    prices = close[[c - 1 for c in checkpoints]].to_numpy()
     moves = np.abs(prices / first_open.to_numpy()[:, None] - 1)
     # Average over the previous `lookback` days that have the price; a half-day or a data gap
     # must not blank the next two weeks (at least 10 of the 14 days are required).
     sigma = pd.DataFrame(moves).rolling(lookback, min_periods=min(10, lookback)).mean().shift(1).to_numpy()
-    prev_close = close[CLOSE - 1].shift(1).to_numpy()
+    prev_close = close[session_close - 1].shift(1).to_numpy()
     rows = []
     for i, day in enumerate(close.index):
         open_, prev = first_open.iat[i], prev_close[i]
@@ -87,19 +94,19 @@ def s2_noise_area(close: pd.DataFrame, spread: pd.DataFrame, first_open: pd.Seri
             values = _fill(position, entry, bids[ok], s_entry, spreads[ok], slip)
             return total + float(np.min(values))
 
-        for k, minute in enumerate(CHECKPOINTS):
+        for k, minute in enumerate(checkpoints):
             price, s_now = prices[i, k], spread.at[day, minute - 1]
             if not np.isfinite(price):
                 continue
             if (position > 0 and price <= upper[k]) or (position < 0 and price >= lower[k]):
-                worst = min(worst, marked_low(minute - 1 - OPEN))
+                worst = min(worst, marked_low(minute - 1 - session_open))
                 total += _fill(position, entry, price, s_entry, s_now, slip)
                 position = 0
             if position == 0 and (price > upper[k] or price < lower[k]):
                 position, entry, s_entry, trades = (1 if price > upper[k] else -1), price, s_now, trades + 1
-                start_col = minute - 1 - OPEN
+                start_col = minute - 1 - session_open
         if position:
-            worst = min(worst, marked_low(CLOSE - 1 - OPEN))
+            worst = min(worst, marked_low(session_close - 1 - session_open))
             total += _fill(position, entry, last, s_entry, s_last, slip)
         rows.append({"date": day, "direction": 0, "trades": trades, "ret": total, "worst": min(worst, total)})
     return (pd.DataFrame(rows).set_index("date") if rows

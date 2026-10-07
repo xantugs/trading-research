@@ -56,3 +56,23 @@ def test_s2_records_the_days_lowest_marked_equity_for_daily_loss_limits() -> Non
     final = s2_noise_area(close, spread, first, slip=0.0).iloc[-1]
     assert final.ret == pytest.approx(0.0)
     assert final.worst == pytest.approx((99.0 - 102.0) / 102.0)
+
+
+def test_s2_follows_another_markets_session_and_time_zone() -> None:
+    """The DAX session (09:00-17:30 Berlin) gives checkpoints 09:30 ... 17:00 and a 17:30 exit."""
+    days = pd.bdate_range("2023-01-02", periods=16)
+
+    def berlin(day: str, prices: dict[str, float]) -> pd.DataFrame:
+        index = pd.date_range(f"{day} 09:00", f"{day} 17:30", freq="min", inclusive="left", tz="Europe/Berlin")
+        close = pd.Series(100.0, index=index)
+        for hhmm, value in sorted(prices.items()):
+            close[close.index >= pd.Timestamp(f"{day} {hhmm}", tz="Europe/Berlin")] = value
+        return pd.DataFrame({"open": close, "high": close, "low": close, "close": close},
+                            index=index.tz_convert("UTC"))
+
+    m1 = pd.concat([*[berlin(d.date().isoformat(), {}) for d in days[:15]],
+                    berlin(days[15].date().isoformat(), {"16:45": 101.0, "17:20": 103.0})])
+    close, spread, first = session_grid(m1, np.zeros(len(m1)), "Europe/Berlin", 540, 1050)
+    final = s2_noise_area(close, spread, first, slip=0.0).iloc[-1]
+    # long at the 17:00 checkpoint (101), flat at the 17:30 close (103)
+    assert final.trades == 1 and final.ret == pytest.approx(2.0 / 101.0)
