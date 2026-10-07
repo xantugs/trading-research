@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
-"""12-month FTMO lifecycle for S2: net dollars per month per $100k account (docs/S2_FTMO_SIZING.md).
+"""12-month FTMO lifecycle for S2: net dollars per month per account (docs/S2_FTMO_SIZING.md).
 
-    python -m scripts.s2_lifecycle
+    python -m scripts.s2_lifecycle                      # $100k, the first grid
+    python -m scripts.s2_lifecycle --size 10000 --fee-1step 79 --fee-2step 89         --lc-1step 3 4 5 6 8 --lc-2step 4 5 6 8 --lf 2 3 4 5 --tag _10k_risky
 """
 from __future__ import annotations
 
 import json
+import argparse
 from pathlib import Path
 
 import numpy as np
@@ -71,13 +73,27 @@ def life(days: np.ndarray, plan: dict, lc: float, lf: float, rng: np.random.Gene
     return net, first_payout
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
+    global SIZE
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--size", type=int, default=100_000)
+    parser.add_argument("--fee-1step", type=float, default=499.0)
+    parser.add_argument("--fee-2step", type=float, default=540.0)
+    parser.add_argument("--lc-1step", type=float, nargs="+", default=list(PLANS["1-Step"]["lc"]))
+    parser.add_argument("--lc-2step", type=float, nargs="+", default=list(PLANS["2-Step"]["lc"]))
+    parser.add_argument("--lf", type=float, nargs="+", default=list(LF))
+    parser.add_argument("--tag", default="")
+    args = parser.parse_args(argv)
+    SIZE = args.size
+    PLANS["1-Step"].update(fee=args.fee_1step, lc=tuple(args.lc_1step))
+    PLANS["2-Step"].update(fee=args.fee_2step, lc=tuple(args.lc_2step))
+    lf_grid = tuple(args.lf)
     data = scenarios()
     rows = []
     for scenario, days in data.items():
         for name, plan in PLANS.items():
             for lc in plan["lc"]:
-                for lf in LF:
+                for lf in lf_grid:
                     rng = np.random.default_rng(41)
                     sims = [life(days, plan, lc, lf, rng) for _ in range(PATHS)]
                     net = np.array([s[0] for s in sims])
@@ -90,7 +106,7 @@ def main() -> int:
             print(f"{scenario} {name} done", flush=True)
     table = pd.DataFrame(rows)
     OUT.mkdir(parents=True, exist_ok=True)
-    table.to_csv(OUT / "lifecycle.csv", index=False)
+    table.to_csv(OUT / f"lifecycle{args.tag}.csv", index=False)
     dev = table[table.scenario == "development edge"]
     chosen = {}
     for name in PLANS:
@@ -102,7 +118,7 @@ def main() -> int:
                                           "P(12 months below zero)": round(row["P(12 months below zero)"], 3),
                                           "median months to first payout": row["median months to first payout"]}
                            for _, row in others.iterrows()}}
-    (OUT / "lifecycle_chosen.json").write_text(json.dumps(chosen, indent=2) + "\n", encoding="utf-8")
+    (OUT / f"lifecycle{args.tag}_chosen.json").write_text(json.dumps(chosen, indent=2) + "\n", encoding="utf-8")
     print(json.dumps(chosen, indent=2))
     return 0
 

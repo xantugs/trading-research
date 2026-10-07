@@ -142,3 +142,13 @@ are included.
 - The funded sizes here (2×) are far above the "keep the account" sizes chosen earlier
   (1× and 0.5×). This plan expects to lose funded accounts and buy new challenges, and it
   only pays if the edge is real.
+
+## Riskier grid for a $10k account (planned 8 October 2026, before running)
+
+The user asked for more risk and can afford a $10k account. The same lifecycle is run with:
+- **Fees:** $79 for a 1-Step and $89 for a 2-Step.
+- **Grid:** 1-Step Lc ∈ {3, 4, 5, 6, 8}; 2-Step Lc ∈ {4, 5, 6, 8}; Lf ∈ {2, 3, 4, 5}.
+
+The choice rule is unchanged: the highest mean net per month under the development edge,
+reported with the holdout and zero-edge cases. At these sizes, one 0.4–0.6% adverse move
+can breach a daily limit, so the minute-bar understatement of breaches matters more.
