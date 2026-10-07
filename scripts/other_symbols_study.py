@@ -133,6 +133,8 @@ def _one(path: str) -> dict:
              "slippage_price": max(config.point, 0.1 * median_spread)}
     config = replace(config, **costs)
     trades = backtest(m1, config)[0]
+    if trades.empty:
+        return {**row, **costs, "excluded": "no trades"}
     stamp = pd.to_datetime(trades.timestamp, utc=True)
     back = _stats(trades.R_result[stamp < FORWARD])
     fwd = _stats(trades.R_result[(stamp >= FORWARD) & (stamp < FORWARD_END)])
