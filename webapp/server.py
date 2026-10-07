@@ -25,6 +25,7 @@ from uuid import uuid4
 import pandas as pd
 
 from orb_research.config import Config, load_config
+from orb_research.data_loader import decode_broker_clock
 from orb_research.tester_report import tester_report
 
 
@@ -77,6 +78,10 @@ RUN_ID = re.compile(r"^[A-Za-z0-9_-]{1,80}$")
 TRADES_ROUTE = re.compile(r"^/api/runs/([A-Za-z0-9_-]{1,80})/trades$")
 TRADES_CSV_ROUTE = re.compile(r"^/api/runs/([A-Za-z0-9_-]{1,80})/trades\.csv$")
 REPORT_ROUTE = re.compile(r"^/api/runs/([A-Za-z0-9_-]{1,80})/report$")
+TRADE_CHART_ROUTE = re.compile(r"^/api/runs/([A-Za-z0-9_-]{1,80})/trades/(\d{1,6})/chart$")
+# A trade chart uses the run's entry timeframe, or the next coarser one that keeps it readable.
+CHART_TIMEFRAMES = (1, 5, 15, 30, 60, 120, 240, 1440)
+CHART_MAX_BARS = 240
 PROGRESS = re.compile(r"^\[[#-]+\]\s+(\d+)%\s+\d+/\d+\s+(.+)$")
 FOLD_START = re.compile(r"^Fold (\d)/4: training (\d{4})-(\d{4})$")
 FOLD_TRAIN = re.compile(r"^  train buffer (\d+\.\d+):")
@@ -420,6 +425,65 @@ class ResearchWeb:
         self._reports[run_id] = result
         return result
 
+    def trade_chart(self, run_id: str, index: int) -> dict | None:
+        """Candles around one trade of a completed backtest, with its range, stop and target.
+
+        Only the cached months that the trade spans are read, decoded with the run's own
+        broker clock, so the chart shows exactly the bars the engine traded on.
+        """
+        if not RUN_ID.fullmatch(run_id):
+            raise ValueError("invalid run ID")
+        run_dir = self.runs_dir / run_id
+        trades_path, config_path = run_dir / "trades.csv", run_dir / "config_used.json"
+        if not trades_path.is_file() or not config_path.is_file():
+            return None
+        trades = pd.read_csv(trades_path)
+        if not 0 <= index < len(trades):
+            return None
+        trade = trades.iloc[index]
+        config = load_config(config_path)
+        if config.source != "mt5":
+            raise ValueError("trade charts need the MT5 M1 cache")
+        zone = config.session_timezone
+        start = pd.Timestamp(trade.range_start).tz_convert("UTC") - pd.Timedelta(minutes=30)
+        end = pd.Timestamp(trade.exit_time).tz_convert("UTC") + pd.Timedelta(minutes=30)
+        cache = Path(config.cache_dir) / config.expected_server / config.symbol
+        months = pd.period_range((start - pd.Timedelta(days=2)).tz_convert(None),
+                                 (end + pd.Timedelta(days=2)).tz_convert(None), freq="M")
+        frames = [pd.read_parquet(path) for month in months
+                  if (path := cache / month.strftime("%Y%m.parquet")).is_file()]
+        frames = [frame for frame in frames if not frame.empty]
+        if not frames:
+            raise ValueError("the cached M1 months for this trade are missing")
+        m1 = pd.concat(frames).sort_index()
+        m1 = decode_broker_clock(m1.loc[~m1.index.duplicated(keep="first")], config)
+        m1 = m1.loc[(m1.index >= start) & (m1.index < end)]
+        minutes = next((m for m in CHART_TIMEFRAMES
+                        if m >= config.signal_minutes and len(m1) / m <= CHART_MAX_BARS), 1440)
+        bars = m1.resample(f"{minutes}min", label="left", closed="left", origin="epoch").agg(
+            {"open": "first", "high": "max", "low": "min", "close": "last"}).dropna()
+
+        def when(value):
+            return None if pd.isna(value) else pd.Timestamp(value).tz_convert(zone).isoformat()
+
+        def number(name):
+            value = trade.get(name)
+            return None if value is None or pd.isna(value) else float(value)
+
+        return {
+            "timezone": zone, "timeframe_minutes": minutes, "symbol": config.symbol,
+            "candles": [[when(t), float(row.open), float(row.high), float(row.low), float(row.close)]
+                        for t, row in bars.iterrows()],
+            "trade": {
+                "index": index, "session_date": str(trade.session_date),
+                "direction": str(trade.direction), "exit_reason": str(trade.exit_reason),
+                "entry_time": when(trade.timestamp), "exit_time": when(trade.exit_time),
+                "range_start": when(trade.range_start), "range_end": when(trade.range_end),
+                **{name: number(name) for name in ("range_high", "range_low", "entry", "stop",
+                                                     "take_profit", "exit", "R_result", "PnL")},
+            },
+        }
+
     @staticmethod
     def _public_metrics(metrics: dict) -> dict:
         return {key: metrics.get(key) for key in (
@@ -714,6 +778,16 @@ def make_handler(app: ResearchWeb):
                     self._json(HTTPStatus.NOT_FOUND, {"error": "No trades for this run"})
                     return
                 self._json(HTTPStatus.OK, report)
+            elif (match := TRADE_CHART_ROUTE.match(path)):
+                try:
+                    chart = app.trade_chart(match.group(1), int(match.group(2)))
+                except (OSError, ValueError, KeyError) as exc:
+                    self._json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": f"Chart failed: {exc}"})
+                    return
+                if chart is None:
+                    self._json(HTTPStatus.NOT_FOUND, {"error": "No such trade"})
+                    return
+                self._json(HTTPStatus.OK, chart)
             elif (match := TRADES_ROUTE.match(path)):
                 run_id = match.group(1)
                 record = app.get_run(run_id, monthly_stats=False)

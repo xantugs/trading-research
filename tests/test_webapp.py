@@ -460,3 +460,37 @@ def test_relay_reports_a_tunnel_that_dies_without_a_link(capsys):
     assert "failed to connect" in err
     assert "exited (code 1) before publishing a link" in err
     assert "local dashboard is still running" in err
+
+
+def test_trade_chart_reads_the_trade_window_with_the_runs_own_clock(tmp_path):
+    from dataclasses import asdict, replace
+
+    import pandas as pd
+
+    config = replace(Config(), source="mt5", cache_dir=str(tmp_path / "cache"), expected_server="Demo",
+                     symbol="IDX", broker_clock="new_york_plus_7", signal_minutes=15)
+    month = tmp_path / "cache" / "Demo" / "IDX"
+    month.mkdir(parents=True)
+    # 09:00-12:00 New York on 2023-01-03, stored in the server clock (New York + 7 h)
+    index = pd.date_range("2023-01-03 16:00", "2023-01-03 19:00", freq="min", tz="UTC", inclusive="left")
+    pd.DataFrame({"open": 100.0, "high": 100.5, "low": 99.5, "close": 100.0, "tick_volume": 1,
+                  "spread": 0, "real_volume": 0}, index=index).to_parquet(month / "202301.parquet")
+    run = tmp_path / "outputs" / "runs" / "20240901T000000Z-abcdef"
+    run.mkdir(parents=True)
+    (run / "config_used.json").write_text(json.dumps(asdict(config)), encoding="utf-8")
+    (run / "trades.csv").write_text(
+        "timestamp,session_date,direction,range_start,range_end,range_high,range_low,entry,stop,"
+        "take_profit,exit_time,exit,exit_reason,R_result,PnL\n"
+        "2023-01-03 15:00:00+00:00,2023-01-03,long,2023-01-03 14:30:00+00:00,2023-01-03 14:45:00+00:00,"
+        "101,99,101,99,104,2023-01-03 16:00:00+00:00,104,target,1.5,10\n", encoding="utf-8")
+    app = ResearchWeb(root=tmp_path, config_path=CONFIG)
+    chart = app.trade_chart("20240901T000000Z-abcdef", 0)
+    assert chart["timeframe_minutes"] == 15
+    # 30 minutes before the range (09:00 NY) to 30 minutes after the exit (11:30 NY)
+    assert [c[0] for c in chart["candles"]][:2] == ["2023-01-03T09:00:00-05:00", "2023-01-03T09:15:00-05:00"]
+    assert len(chart["candles"]) == 10
+    assert chart["trade"]["entry_time"] == "2023-01-03T10:00:00-05:00"
+    assert chart["trade"]["take_profit"] == 104.0
+    assert app.trade_chart("20240901T000000Z-abcdef", 1) is None
+    with pytest.raises(ValueError, match="invalid run ID"):
+        app.trade_chart("../x", 0)

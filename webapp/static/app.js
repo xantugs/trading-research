@@ -47,15 +47,6 @@ const COMPARE_METRICS = [
   { label: "Sharpe (monthly, ann.)", value: r => r.metrics.sharpe_monthly_annualized, format: v => v == null ? "—" : Number(v).toFixed(2), signed: true },
 ];
 
-function setSetupMode(mode) {
-  const walk = mode === "walk_forward";
-  $("parameterForm").hidden = walk;
-  $("walkForwardSetup").hidden = !walk;
-  $("singleTab").setAttribute("aria-selected", String(!walk));
-  $("walkTab").setAttribute("aria-selected", String(walk));
-  $("setupTitle").textContent = walk ? "Fixed walk-forward" : "Parameters";
-}
-
 function toast(message) {
   const el = $("toast");
   el.textContent = message;
@@ -104,9 +95,6 @@ function showPresetWindow(preset) {
   const legacy = w.broker_clock === "stored_as_utc";
   $("presetSummary").textContent = preset.summary;
   $("presetWindow").textContent = `${w.symbol} · ${years} development · ${legacy ? "legacy clock" : "NY + 7 h clock"}`;
-  $("datasetName").textContent = `${w.server} / ${w.symbol}`;
-  $("developmentWindow").textContent = `${years} development`;
-  $("clockPill").textContent = legacy ? "Legacy UTC clock" : "NY + 7 h clock";
   // Once the holdout is opened, results through the window's end are no longer out-of-sample.
   const opened = w.holdout_opened && w.development_end > w.holdout_start;
   const lastDay = last.toISOString().slice(0, 10);
@@ -114,7 +102,6 @@ function showPresetWindow(preset) {
     ? `Data to ${lastDay} · holdout opened ${w.holdout_opened} ◇`
     : `${w.holdout_start.slice(0, 4)}+ holdout sealed ◇`;
   $("presetWindow").textContent += opened ? " · includes former holdout" : "";
-  $("clockPill").classList.toggle("warn", legacy);
 }
 
 function applyPreset(id, parameters = null) {
@@ -143,6 +130,9 @@ function markModified() {
 }
 
 function updateChips(form) {
+  const stops = {opposite_range: "Far side of range", range_multiple: `${form.stop_width_multiple}× range`,
+                 atr: `${form.atr_stop_multiple}× daily ATR`};
+  $("stopChip").textContent = stops[form.stop_method] + (form.breakout_buffer_atr ? ` · buffer ${form.breakout_buffer_atr}× ATR` : "");
   const filters = [];
   if (form.entry_mode === "stop_order") filters.push("stop order");
   if (form.or_candle !== "any") filters.push(`${form.or_candle} range`);
@@ -415,48 +405,9 @@ function renderCompare() {
   renderCompareTable(ids);
 }
 
-function renderCurve(values) {
-  if (!values || values.length < 2) {
-    $("drawdownLine").setAttribute("d", "");
-    $("drawdownFill").setAttribute("d", "");
-    $("chartHint").textContent = "Select a completed run";
-    return;
-  }
-  const depth = Math.max(1, ...values.map(v => -Number(v)));
-  const points = values.map((v, i) => {
-    const x = 800 * i / (values.length - 1);
-    const y = 4 + 132 * (-Number(v)) / depth;
-    return `${x.toFixed(1)},${y.toFixed(1)}`;
-  });
-  $("drawdownLine").setAttribute("d", `M${points.join(" L")}`);
-  $("drawdownFill").setAttribute("d", `M0,4 L${points.join(" L")} L800,4 Z`);
-  $("chartHint").textContent = `Worst closed drawdown ${depth.toFixed(2)}%`;
-}
-
-function renderFolds(run) {
-  const visible = run && run.kind === "walk_forward" && run.folds && run.folds.length;
-  $("foldResults").hidden = !visible;
-  const body = $("foldBody");
-  body.replaceChildren();
-  if (!visible) return;
-  for (const fold of run.folds) {
-    const row = document.createElement("tr");
-    metricCell(row, `${fold.train_start}–${fold.train_end_inclusive}`);
-    metricCell(row, String(fold.test_year));
-    metricCell(row, `${Number(fold.selected_buffer).toFixed(2)} × ATR`);
-    metricCell(row, formatR(fold.selected_train_mean_r));
-    metricCell(row, Number(fold.trades).toLocaleString());
-    metricCell(row, formatR(fold.mean_r), Number(fold.mean_r) < 0 ? "bad" : "good");
-    metricCell(row, formatPercent(fold.return_pct), Number(fold.return_pct) < 0 ? "bad" : "good");
-    metricCell(row, formatPercent(fold.max_closed_dd_pct, 2, false));
-    body.appendChild(row);
-  }
-}
-
 function renderSelected() {
   const run = selectedRun;
   $("runButton").disabled = Boolean(activeId);
-  $("runWalkForwardButton").disabled = Boolean(activeId);
   if (!run) return;
   const metrics = run.metrics || {};
   const state = run.state || "idle";
@@ -470,12 +421,13 @@ function renderSelected() {
   $("progressFill").style.width = `${progress}%`;
   $("progressTrack").setAttribute("aria-valuenow", String(progress));
   $("percentLabel").textContent = `${progress}%`;
+  $("progressBlock").hidden = !(state === "running" || state === "queued");
   $("stageLabel").textContent = run.stage || "Waiting";
   $("netReturn").textContent = formatPercent(metrics.net_return_pct);
   $("meanR").textContent = formatR(metrics.expectancy_r);
   $("maxDD").textContent = formatPercent(metrics.max_drawdown_pct, 2, false);
   $("tradeCount").textContent = metrics.trades == null ? "—" : Number(metrics.trades).toLocaleString();
-  $("monthlyVol").textContent = metrics.monthly_volatility_pct == null ? "—" : `${Number(metrics.monthly_volatility_pct).toFixed(2)}%`;
+  $("winRate").textContent = metrics.win_rate == null ? "—" : formatPercent(metrics.win_rate * 100, 1, false);
   $("sharpeRatio").textContent = metrics.sharpe_monthly_annualized == null ? "—" : Number(metrics.sharpe_monthly_annualized).toFixed(2);
   for (const [id, value] of [["netReturn", metrics.net_return_pct], ["meanR", metrics.expectancy_r],
                              ["sharpeRatio", metrics.sharpe_monthly_annualized]]) {
@@ -487,18 +439,19 @@ function renderSelected() {
   const reusable = !study && run.strategy !== "tick_scalper" && run.parameters && Object.keys(run.parameters).length;
   $("useSettings").hidden = !reusable;
   $("targetHead").textContent = run.parameters && run.parameters.trail_atr_multiple ? "Trail at" : "Target";
-  renderCurve(run.drawdown_curve);
-  renderFolds(run);
+}
+
+function filteredTradeIndexes() {
+  return selectedTrades.map((trade, index) => index).filter(index => {
+    const pnl = Number(selectedTrades[index].PnL);
+    return tradeFilter === "win" ? pnl > 0 : tradeFilter === "loss" ? pnl < 0 : true;
+  });
 }
 
 function renderTrades() {
   const body = $("tradeBody");
   body.replaceChildren();
-  const filtered = selectedTrades.filter(trade => {
-    if (tradeFilter === "win") return Number(trade.PnL) > 0;
-    if (tradeFilter === "loss") return Number(trade.PnL) < 0;
-    return true;
-  });
+  const filtered = filteredTradeIndexes().map(index => selectedTrades[index]);
   $("tradeListCount").textContent = `${filtered.length} trade${filtered.length === 1 ? "" : "s"}`;
   $("tradesDownload").disabled = !selectedTrades.length;
   if (!filtered.length) {
@@ -510,6 +463,9 @@ function renderTrades() {
   }
   for (const trade of filtered) {
     const row = document.createElement("tr");
+    const index = selectedTrades.indexOf(trade);
+    row.dataset.index = String(index);
+    row.addEventListener("click", () => openTrade(index));
     metricCell(row, trade.session_date || "—");
     metricCell(row, trade.direction === "long" ? "Long" : "Short");
     metricCell(row, trade.entry != null ? trade.entry.toFixed(2) : "—");
@@ -585,7 +541,6 @@ async function refresh() {
       || (listed && listed.state !== selectedRun.state);
     if (selectedId && stale) await selectRun(selectedId);
     $("runButton").disabled = Boolean(activeId);
-    $("runWalkForwardButton").disabled = Boolean(activeId);
   } catch (error) {
     $("connectionLabel").textContent = "Worker unavailable";
   } finally { fetching = false; }
@@ -606,9 +561,7 @@ async function unlock() {
     activeId = data.active_id;
     renderHistory();
     if (history.length) await selectRun(activeId || history[0].id);
-    setSetupMode(selectedRun && selectedRun.kind === "walk_forward" ? "walk_forward" : "backtest");
     $("runButton").disabled = Boolean(activeId);
-    $("runWalkForwardButton").disabled = Boolean(activeId);
     $("connectionLabel").textContent = activeId ? "Worker running" : "Worker online";
   } catch (error) { $("authError").textContent = error.message; }
 }
@@ -625,7 +578,7 @@ $("parameterForm").addEventListener("submit", async event => {
   $("runButton").disabled = true;
   try {
     const run = await api("/api/runs", {method:"POST", body:JSON.stringify({
-      parameters:formParameters(), tick_check:$("tickCheck").checked, preset:presetId
+      parameters:formParameters(), tick_check:false, preset:presetId
     })});
     activeId = run.id;
     selectedId = run.id;
@@ -642,30 +595,6 @@ $("parameterForm").addEventListener("submit", async event => {
     toast(error.message);
   }
 });
-
-$("runWalkForwardButton").addEventListener("click", async () => {
-  if (activeId) return;
-  $("runWalkForwardButton").disabled = true;
-  try {
-    const run = await api("/api/walk-forward", {method:"POST"});
-    activeId = run.id;
-    selectedId = run.id;
-    selectedRun = run;
-    selectedTrades = [];
-    tradesLoadedFor = null;
-    history.unshift(run);
-    renderHistory();
-    renderSelected();
-    renderTrades();
-    toast("Walk-forward started. The four folds will appear when complete.");
-  } catch (error) {
-    $("runWalkForwardButton").disabled = false;
-    toast(error.message);
-  }
-});
-
-$("singleTab").addEventListener("click", () => setSetupMode("backtest"));
-$("walkTab").addEventListener("click", () => setSetupMode("walk_forward"));
 
 $("clearCompare").addEventListener("click", () => {
   compareIds.clear();
@@ -713,14 +642,16 @@ $("useSettings").addEventListener("click", () => {
   if (!selectedRun || !selectedRun.parameters) return;
   const base = currentPreset();
   applyPreset(selectedRun.preset || presetId, {...base.parameters, ...selectedRun.parameters});
-  setSetupMode("backtest");
   toast(selectedRun.preset ? "Loaded this run's settings into the form." :
     "Loaded this run's settings onto the current preset (the run predates presets).");
 });
 let resizeTimer;
 window.addEventListener("resize", () => {
   clearTimeout(resizeTimer);
-  resizeTimer = setTimeout(() => { if (reportShownFor) showReport(reportCache.get(reportShownFor)); }, 150);
+  resizeTimer = setTimeout(() => {
+    if (reportShownFor) showReport(reportCache.get(reportShownFor));
+    if ($("tradeDialog").open && tradeChartData) renderTradeChart(tradeChartData);
+  }, 150);
 });
 setInterval(refresh, 2000);
 if (accessKey) unlock();
@@ -1048,3 +979,186 @@ function trimHours(rows) {
   const lo = Math.max(0, active[0] - 1), hi = Math.min(23, active[active.length - 1] + 1);
   return rows.slice(lo, hi + 1);
 }
+
+// --- Trade chart --------------------------------------------------------------------------
+// One trade in context: its entry-timeframe candles (coarser for long holds), the opening
+// range box, and the entry, stop-loss and take-profit levels from entry to exit.
+let openTradeIndex = null;
+let tradeChartData = null;
+const tradeCharts = new Map();
+const CANDLE = { up: "#7ee1ae", down: "#f48691", range: "#e5bd71", entry: "#edf4fa", stop: "#f48691",
+                 target: "#7ee1ae", exit: "#e5bd71" };
+
+function priceText(value) {
+  return value == null ? "—" : Number(value).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2});
+}
+
+function nyTime(iso, withDate = false) {
+  // The server sends New York wall-clock times with their offset; show that wall clock.
+  const [date, rest] = iso.split("T");
+  const hhmm = rest.slice(0, 5);
+  return withDate ? `${date.slice(5)} ${hhmm}` : hhmm;
+}
+
+async function openTrade(index) {
+  if (!selectedId || index == null || !selectedTrades[index]) return;
+  openTradeIndex = index;
+  const trade = selectedTrades[index];
+  $("tradeTitle").textContent = `${trade.direction === "long" ? "Long" : "Short"} · ${trade.session_date}`;
+  $("tradeSubtitle").textContent = "Loading candles…";
+  $("tradeFacts").replaceChildren();
+  $("tradeChart").innerHTML = '<div class="chart-message">Loading candles…</div>';
+  const order = filteredTradeIndexes();
+  const at = order.indexOf(index);
+  $("tradePrev").disabled = at <= 0;
+  $("tradeNext").disabled = at < 0 || at >= order.length - 1;
+  if (!$("tradeDialog").open) $("tradeDialog").showModal();
+  const key = `${selectedId}:${index}`;
+  try {
+    if (!tradeCharts.has(key)) tradeCharts.set(key, await api(`/api/runs/${encodeURIComponent(selectedId)}/trades/${index}/chart`));
+    if (openTradeIndex !== index) return;
+    tradeChartData = tradeCharts.get(key);
+    renderTradeFacts(tradeChartData);
+    renderTradeChart(tradeChartData);
+  } catch (error) {
+    $("tradeSubtitle").textContent = "";
+    $("tradeChart").innerHTML = `<div class="chart-message">${escapeHtml(error.message)}</div>`;
+  }
+}
+
+function renderTradeFacts(data) {
+  const t = data.trade;
+  const reason = (t.exit_reason || "").replaceAll("_", " ");
+  $("tradeSubtitle").textContent = `${data.symbol} · ${data.timeframe_minutes >= 1440 ? "daily" : data.timeframe_minutes + "-minute"} candles · New York time · exit by ${reason}`;
+  const facts = [
+    ["Range", `${priceText(t.range_low)} – ${priceText(t.range_high)}`],
+    ["Entry", `${priceText(t.entry)} at ${nyTime(t.entry_time)}`],
+    ["Stop loss", priceText(t.stop)],
+    ["Take profit", priceText(t.take_profit)],
+    ["Exit", `${priceText(t.exit)} at ${nyTime(t.exit_time, t.exit_time.slice(0, 10) !== t.entry_time.slice(0, 10))}`],
+    ["Result", `${formatR(t.R_result)} · ${formatMoney(t.PnL)}`, Number(t.R_result) < 0 ? "negative" : "positive"],
+  ];
+  $("tradeFacts").replaceChildren(...facts.map(([label, value, cls]) => {
+    const box = document.createElement("div");
+    box.className = "fact";
+    box.innerHTML = `<span>${label}</span><strong class="${cls || ""}">${escapeHtml(value)}</strong>`;
+    return box;
+  }));
+}
+
+function renderTradeChart(data) {
+  const container = $("tradeChart");
+  const candles = data.candles;
+  if (!candles.length) { container.innerHTML = '<div class="chart-message">No candles cached for this trade.</div>'; return; }
+  const t = data.trade;
+  const height = Math.max(300, Math.min(460, window.innerHeight - 290));
+  const f = frame(container, height, { top: 12, right: 78, bottom: 26, left: 62 });
+  const levels = [t.range_high, t.range_low, t.entry, t.stop, t.take_profit, t.exit].filter(v => v != null);
+  const lo = Math.min(...candles.map(c => c[3]), ...levels);
+  const hi = Math.max(...candles.map(c => c[2]), ...levels);
+  const pad = (hi - lo) * 0.04 || 1;
+  const ticks = niceTicks(lo - pad, hi + pad, 5);
+  const y0 = ticks[0], y1 = ticks[ticks.length - 1];
+  const y = v => f.margin.top + f.plotH * (1 - (v - y0) / (y1 - y0));
+  yAxis(f, ticks, y, v => Number(v).toLocaleString(undefined, {maximumFractionDigits: 2}));
+  // Candles sit on an even grid, so nights and weekends take no space.
+  const times = candles.map(c => Date.parse(c[0]));
+  const band = f.plotW / candles.length;
+  const x = i => f.margin.left + band * (i + 0.5);
+  const step = data.timeframe_minutes * 60000;
+  const slot = iso => {
+    const ms = Date.parse(iso);
+    let i = times.findIndex(time => time + step > ms);
+    if (i < 0) i = candles.length - 1;
+    return i;
+  };
+  const xAt = iso => x(slot(iso));
+
+  // opening range: box over the range candles, dotted edges carried to the exit
+  const rs = slot(t.range_start), re = Math.max(rs, slot(t.range_end) - 1), ex = slot(t.exit_time);
+  svgNode("rect", { x: x(rs) - band / 2, y: y(t.range_high), width: band * (re - rs + 1),
+                    height: Math.max(1, y(t.range_low) - y(t.range_high)), fill: CANDLE.range,
+                    "fill-opacity": .14, stroke: CANDLE.range, "stroke-opacity": .7 }, f.svg);
+  for (const level of [t.range_high, t.range_low]) {
+    svgNode("line", { x1: x(re) + band / 2, x2: x(ex), y1: y(level), y2: y(level), stroke: CANDLE.range,
+                      "stroke-opacity": .45, "stroke-dasharray": "2 4" }, f.svg);
+  }
+  // stop and target from entry to exit, entry level, and right-edge labels
+  const en = slot(t.entry_time);
+  const label = (value, text, color) => {
+    if (value == null) return;
+    const tag = svgNode("text", { x: f.width - f.margin.right + 6, y: y(value) + 3.5, class: "viz-axis", fill: color }, f.svg);
+    tag.style.fill = color;
+    tag.textContent = `${text} ${priceText(value)}`;
+  };
+  const level = (value, color, dash) => {
+    if (value == null) return;
+    svgNode("line", { x1: x(en) - band / 2, x2: x(ex) + band / 2, y1: y(value), y2: y(value), stroke: color,
+                      "stroke-width": 1.5, "stroke-dasharray": dash || "none" }, f.svg);
+  };
+  if (t.take_profit != null) {
+    svgNode("rect", { x: x(en) - band / 2, width: band * (ex - en + 1), y: Math.min(y(t.entry), y(t.take_profit)),
+                      height: Math.abs(y(t.take_profit) - y(t.entry)), fill: CANDLE.target, "fill-opacity": .07 }, f.svg);
+  }
+  svgNode("rect", { x: x(en) - band / 2, width: band * (ex - en + 1), y: Math.min(y(t.entry), y(t.stop)),
+                    height: Math.abs(y(t.stop) - y(t.entry)), fill: CANDLE.stop, "fill-opacity": .07 }, f.svg);
+  level(t.take_profit, CANDLE.target, "6 4");
+  level(t.stop, CANDLE.stop, "6 4");
+  level(t.entry, CANDLE.entry);
+  label(t.take_profit, "TP", CANDLE.target);
+  label(t.stop, "SL", CANDLE.stop);
+  label(t.entry, "Entry", CANDLE.entry);
+
+  // candles
+  const bodyW = Math.max(1, Math.min(14, band * 0.66));
+  candles.forEach((c, i) => {
+    const [, open, high, low, close] = c;
+    const color = close >= open ? CANDLE.up : CANDLE.down;
+    svgNode("line", { x1: x(i), x2: x(i), y1: y(high), y2: y(low), stroke: color, "stroke-width": 1 }, f.svg);
+    svgNode("rect", { x: x(i) - bodyW / 2, y: y(Math.max(open, close)), width: bodyW,
+                      height: Math.max(1, Math.abs(y(open) - y(close))), fill: color }, f.svg);
+  });
+
+  // entry and exit markers
+  const up = t.direction === "long";
+  const ey = y(t.entry), mx = x(en);
+  svgNode("path", { d: up ? `M${mx - 6},${ey + 13} L${mx + 6},${ey + 13} L${mx},${ey + 4} Z`
+                          : `M${mx - 6},${ey - 13} L${mx + 6},${ey - 13} L${mx},${ey - 4} Z`, fill: CANDLE.entry }, f.svg);
+  svgNode("circle", { cx: x(ex), cy: y(t.exit), r: 5, fill: "none", stroke: CANDLE.exit, "stroke-width": 2 }, f.svg);
+
+  // time axis: a label every ~90px, with the date where the day changes
+  const every = Math.max(1, Math.ceil(90 / band));
+  let lastDay = "";
+  candles.forEach((c, i) => {
+    if (i % every) return;
+    const day = c[0].slice(0, 10);
+    const text = svgNode("text", { x: x(i), y: height - 8, "text-anchor": "middle", class: "viz-axis" }, f.svg);
+    text.textContent = day !== lastDay && i > 0 ? `${day.slice(5)} ${nyTime(c[0])}` : nyTime(c[0]);
+    lastDay = day;
+  });
+
+  // hover: one hit area per candle
+  candles.forEach((c, i) => {
+    const hit = svgNode("rect", { x: x(i) - band / 2, y: f.margin.top, width: band, height: f.plotH, fill: "transparent" }, f.svg);
+    hit.addEventListener("mousemove", event => tip(event,
+      `<strong>${escapeHtml(nyTime(c[0], true))} NY</strong>` +
+      `<span>O ${priceText(c[1])} · H ${priceText(c[2])}</span><span>L ${priceText(c[3])} · C ${priceText(c[4])}</span>`));
+  });
+}
+
+function stepTrade(delta) {
+  const order = filteredTradeIndexes();
+  const at = order.indexOf(openTradeIndex);
+  const next = order[at + delta];
+  if (next != null) openTrade(next);
+}
+
+$("tradePrev").addEventListener("click", () => stepTrade(-1));
+$("tradeNext").addEventListener("click", () => stepTrade(1));
+$("tradeClose").addEventListener("click", () => $("tradeDialog").close());
+$("tradeDialog").addEventListener("click", event => { if (event.target === $("tradeDialog")) $("tradeDialog").close(); });
+$("tradeDialog").addEventListener("close", () => { openTradeIndex = null; tradeChartData = null; tip(null, null); });
+$("tradeDialog").addEventListener("keydown", event => {
+  if (event.key === "ArrowLeft") stepTrade(-1);
+  if (event.key === "ArrowRight") stepTrade(1);
+});

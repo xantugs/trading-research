@@ -9,173 +9,148 @@
   <script src="/app.js" defer></script>
 </head>
 <body>
-  <div class="ambient ambient-a"></div><div class="ambient ambient-b"></div>
-  <div class="shell">
-    <header class="topbar">
-      <div class="brand"><div class="brand-mark">◈</div><div><strong>ORB<span>research</span></strong><small>FTMO indices &amp; gold · research desk</small></div></div>
-      <div class="top-status"><span class="status-dot"></span><span id="connectionLabel">Connecting to worker</span></div>
-    </header>
+  <div class="app" id="workspace" hidden>
+    <aside class="sidebar">
+      <div class="sidebar-head">
+        <div class="brand"><div class="brand-mark">◈</div><strong>ORB<span>research</span></strong></div>
+        <div class="top-status"><span class="status-dot"></span><span id="connectionLabel">Connecting</span></div>
+      </div>
 
-    <main id="workspace" hidden>
-      <section class="intro">
-        <div><div class="eyebrow">BACKTEST CONTROL ROOM</div><h1>Test an idea.<br><em>Keep the evidence.</em></h1>
-          <p>Start from a preset, tune any rule, run it against cached FTMO broker history, and read the full tester report. Each preset shows the data window it reads.</p>
+      <form id="parameterForm">
+        <div class="preset-card">
+          <label class="preset-label" for="presetSelect">Preset</label>
+          <select id="presetSelect" aria-describedby="presetSummary"></select>
+          <p class="preset-summary" id="presetSummary"></p>
+          <div class="preset-meta"><span id="presetWindow"></span><span class="modified-pill" id="presetModified" hidden>Modified</span><button type="button" class="link-button" id="presetReset" hidden>Reset</button></div>
         </div>
-        <div class="dataset-card"><span>DATASET</span><strong id="datasetName">FTMO-Demo / US100.cash</strong><div class="dataset-meta"><span id="developmentWindow">development window</span><span class="pill" id="clockPill">NY + 7 h clock</span><span class="pill">M1 execution</span></div></div>
+
+        <div class="form-group"><h3>Opening range</h3>
+          <div class="fields two"><label>New York open<input name="session_open" type="time" step="60" required></label><label>Range timeframe<select name="range_minutes"><option value="5">5 min</option><option value="15">15 min</option><option value="30">30 min</option><option value="45">45 min</option><option value="60">60 min</option></select></label></div>
+          <div class="fields two"><label>Entry timeframe<select name="signal_minutes"><option value="1">1 min</option><option value="5">5 min</option><option value="15">15 min</option></select></label><label>Direction<select name="trade_direction"><option value="both">Long and short</option><option value="long">Long only</option><option value="short">Short only</option></select></label></div>
+        </div>
+
+        <div class="form-group"><h3>Trade rules</h3>
+          <div class="fields two"><label>Risk <span>% equity</span><input name="risk_percent" type="number" min="0.01" max="2" step="0.01" required></label><label>Target <span>R</span><input name="reward_risk" type="number" min="0.1" max="10" step="0.1" required></label></div>
+          <div class="fields two"><label>Entry cutoff <span>NY</span><input name="session_exit" type="time" step="60" required></label><label>Trades per day<select name="trades_per_session"><option value="one">First breakout</option><option value="one_per_direction">One per direction</option><option value="after_close">Re-enter after close</option></select></label></div>
+          <div class="fields two"><label>Position exit<select name="position_exit"><option value="session_exit">Flat at cutoff</option><option value="stop_or_target">Stop or target</option><option value="end_of_day">Flat daily at…</option><option value="friday_close">Flat Friday at…</option></select></label><label>Flat time <span>NY</span><input name="flat_time" type="time" step="60"></label></div>
+        </div>
+
+        <details class="advanced" id="stopGroup"><summary>Stop placement <span class="chip" id="stopChip">—</span></summary>
+          <div class="fields"><label>Stop method<select name="stop_method"><option value="opposite_range">Opposite side of range</option><option value="range_multiple">Range-width multiple</option><option value="atr">Prior daily ATR multiple</option></select></label></div>
+          <div class="fields two"><label>Range multiple<input name="stop_width_multiple" type="number" min="0.1" max="10" step="0.1" required></label><label>ATR multiple<input name="atr_stop_multiple" type="number" min="0.1" max="10" step="0.1" required></label></div>
+          <div class="fields"><label>Breakout buffer <span>× ATR</span><input name="breakout_buffer_atr" type="number" min="0" max="2" step="0.01" required></label></div>
+          <p class="hint" id="stopHint"></p>
+        </details>
+
+        <details class="advanced" id="filtersGroup"><summary>Entry &amp; filters <span class="chip" id="filtersChip">Default</span></summary>
+          <div class="fields two"><label>Entry type<select name="entry_mode"><option value="close">Close outside</option><option value="stop_order">Stop order at edge</option></select></label><label>Range candle<select name="or_candle"><option value="any">Any</option><option value="bullish">Bullish only</option><option value="bearish">Bearish only</option></select></label></div>
+          <div class="fields two"><label>Min range <span>× ATR</span><input name="or_min_atr" type="number" min="0.01" max="20" step="0.01" placeholder="off"></label><label>Max range <span>× ATR</span><input name="or_max_atr" type="number" min="0.01" max="20" step="0.01" placeholder="off"></label></div>
+          <div class="fields"><label>ATR period <span>range bars</span><input name="or_atr_period" type="number" min="1" max="20000" step="1" required></label></div>
+        </details>
+
+        <details class="advanced" id="trailGroup"><summary>Trailing stop <span class="chip" id="trailChip">Off</span></summary>
+          <div class="fields two"><label>Trail <span>× ATR</span><input name="trail_atr_multiple" type="number" min="0.1" max="10" step="0.1" placeholder="off"></label><label>Starts at <span>R</span><input name="trail_activation_r" type="number" min="0" max="10" step="0.1" required></label></div>
+          <div class="fields"><label>ATR period <span>entry bars</span><input name="trail_atr_period" type="number" min="1" max="1000" step="1" required></label></div>
+        </details>
+
+        <details class="advanced" id="guardGroup"><summary>Account protection <span class="chip" id="guardChip">Off</span></summary>
+          <div class="fields two"><label>Cut risk below <span>% under start</span><input name="risk_throttle_below_pct" type="number" min="0.1" max="50" step="0.1" placeholder="off"></label><label>… to <span>% risk</span><input name="risk_throttle_percent" type="number" min="0.01" max="2" step="0.01" placeholder="off"></label></div>
+          <div class="fields two"><label>Daily stop <span>% under day start</span><input name="daily_loss_stop_pct" type="number" min="0.1" max="50" step="0.1" placeholder="off"></label><label>Hard stop <span>% under start</span><input name="equity_stop_pct" type="number" min="0.1" max="50" step="0.1" placeholder="off"></label></div>
+        </details>
+
+        <details class="advanced" id="costsGroup"><summary>Costs &amp; account <span class="chip" id="costsChip">—</span></summary>
+          <div class="fields two"><label>Starting balance <span>USD</span><input name="initial_equity" type="number" min="100" max="1000000" step="100" required></label><label>Spread ×<input name="spread_multiplier" type="number" min="0.1" max="10" step="0.1" required></label></div>
+          <div class="fields two"><label>Slippage <span>price</span><input name="slippage_price" type="number" min="0" max="10" step="0.01" required></label><label>Zero-spread fallback<input name="fallback_spread_price" type="number" min="0" max="10" step="0.01" required></label></div>
+          <div class="fields two"><label>Commission <span>$/lot/side</span><input name="commission_per_lot_side" type="number" min="0" max="100" step="0.01" required></label><label>Commission <span>%/side</span><input name="commission_rate_pct_side" type="number" min="0" max="1" step="0.0001" required></label></div>
+          <div class="fields"><label>Financing <span>% a year, per night</span><input name="financing_pct_annual" type="number" min="0" max="50" step="0.1" required></label></div>
+        </details>
+
+        <div class="sidebar-foot"><button class="run-button" id="runButton" type="submit">▶ Run backtest</button></div>
+      </form>
+    </aside>
+
+    <main class="main">
+      <section class="panel summary-panel">
+        <div class="panel-heading"><div><h2 id="runTitle">Ready to test</h2><p class="muted tiny" id="runSubtitle">Choose settings and run, or pick a run from the history.</p></div><div class="heading-actions"><button type="button" class="link-button" id="useSettings" hidden>Load these settings</button><span class="state-pill" id="statePill">IDLE</span></div></div>
+        <div class="progress" id="progressBlock" hidden><div class="progress-header"><span id="stageLabel">Waiting</span><strong id="percentLabel">0%</strong></div><div class="progress-track" role="progressbar" aria-label="Run progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" id="progressTrack"><div id="progressFill"></div></div></div>
+        <div class="stat-grid">
+          <div class="stat"><span>Net return</span><strong id="netReturn">—</strong></div><div class="stat"><span>Mean net R</span><strong id="meanR">—</strong></div><div class="stat"><span>Max closed DD</span><strong id="maxDD">—</strong></div><div class="stat"><span>Trades</span><strong id="tradeCount">—</strong></div><div class="stat"><span>Win rate</span><strong id="winRate">—</strong></div><div class="stat"><span>Sharpe (ann.)</span><strong id="sharpeRatio">—</strong></div>
+        </div>
+        <details class="run-log"><summary>Run log</summary><pre id="logText">No run selected.</pre></details>
       </section>
 
-      <div class="layout">
-        <section class="panel setup-panel">
-          <div class="panel-heading"><div><span class="section-index">01 / SETUP</span><h2 id="setupTitle">Parameters</h2></div><span class="muted tiny">New run, new snapshot</span></div>
-          <div class="setup-tabs" role="tablist" aria-label="Research run type"><button id="singleTab" type="button" role="tab" aria-selected="true" aria-controls="parameterForm">Single backtest</button><button id="walkTab" type="button" role="tab" aria-selected="false" aria-controls="walkForwardSetup">Walk-forward</button></div>
-          <form id="parameterForm" role="tabpanel">
-            <div class="preset-card">
-              <label class="preset-label" for="presetSelect">Preset</label>
-              <select id="presetSelect" aria-describedby="presetSummary"></select>
-              <p class="preset-summary" id="presetSummary"></p>
-              <div class="preset-meta"><span id="presetWindow"></span><span class="modified-pill" id="presetModified" hidden>Modified</span><button type="button" class="link-button" id="presetReset" hidden>Reset to preset</button></div>
+      <section class="panel report-panel">
+        <div class="panel-heading"><h2>Tester report</h2><span class="muted tiny" id="reportHint"></span></div>
+        <div class="report-empty" id="reportEmpty">The report appears when a completed run is selected.</div>
+        <div id="reportBody" hidden>
+          <div class="chart-card"><div class="chart-heading"><strong>Balance</strong><span id="balanceHint"></span></div><div class="viz viz-tall" id="balanceChart"></div></div>
+          <div class="report-stats" id="reportStats"></div>
+          <details class="more-charts"><summary>Entry times, P/L by period and excursions</summary>
+            <div class="report-row-title"><strong>Entries</strong><span>Trades by entry time, New York</span></div>
+            <div class="chart-grid">
+              <div class="chart-card"><div class="chart-heading"><strong>By hour</strong></div><div class="viz" id="entriesHour"></div></div>
+              <div class="chart-card"><div class="chart-heading"><strong>By weekday</strong></div><div class="viz" id="entriesWeekday"></div></div>
+              <div class="chart-card"><div class="chart-heading"><strong>By month</strong></div><div class="viz" id="entriesMonth"></div></div>
             </div>
-
-            <div class="form-group"><h3>Opening range</h3>
-              <div class="fields two"><label>New York open<input name="session_open" type="time" step="60" required></label><label>Range timeframe<select name="range_minutes"><option value="5">5 min</option><option value="15">15 min</option><option value="30">30 min</option><option value="45">45 min</option><option value="60">60 min</option></select></label></div>
-              <div class="fields two"><label>Entry timeframe<select name="signal_minutes"><option value="1">1 min</option><option value="5">5 min</option><option value="15">15 min</option></select></label><label>Trade direction<select name="trade_direction"><option value="both">Long and short</option><option value="long">Long only</option><option value="short">Short only</option></select></label></div>
-              <p class="hint">The range is the high and low of the range timeframe from the open. A signal is the first entry-timeframe close outside it; entry is the next bar's open.</p>
+            <div class="report-row-title"><strong>Profits and losses</strong><span class="legend"><i class="swatch profit"></i>Profit <i class="swatch loss"></i>Loss</span></div>
+            <div class="chart-grid">
+              <div class="chart-card"><div class="chart-heading"><strong>By hour</strong></div><div class="viz" id="pnlHour"></div></div>
+              <div class="chart-card"><div class="chart-heading"><strong>By weekday</strong></div><div class="viz" id="pnlWeekday"></div></div>
+              <div class="chart-card"><div class="chart-heading"><strong>By month</strong></div><div class="viz" id="pnlMonth"></div></div>
             </div>
-
-            <details class="advanced" id="filtersGroup"><summary>Entry &amp; filters <span class="chip" id="filtersChip">Default</span></summary>
-              <div class="fields two"><label>Entry type<select name="entry_mode"><option value="close">Close outside the range</option><option value="stop_order">Stop order at the edge</option></select></label><label>Range candle<select name="or_candle"><option value="any">Any</option><option value="bullish">Bullish only</option><option value="bearish">Bearish only</option></select></label></div>
-              <div class="fields two"><label>Min range <span>× ATR</span><input name="or_min_atr" type="number" min="0.01" max="20" step="0.01" placeholder="off"></label><label>Max range <span>× ATR</span><input name="or_max_atr" type="number" min="0.01" max="20" step="0.01" placeholder="off"></label></div>
-              <div class="fields"><label>ATR period <span>range-timeframe bars</span><input name="or_atr_period" type="number" min="1" max="20000" step="1" required></label></div>
-              <p class="hint">A stop order fills on the first touch of the range edge; its fill minute can only stop out. Leave a range bound blank to switch it off. 1344 bars of 15 minutes is 14 days.</p>
-            </details>
-
-            <div class="form-group"><h3>Trade rules</h3>
-              <div class="fields two"><label>Risk per trade <span>% equity</span><input name="risk_percent" type="number" min="0.01" max="2" step="0.01" required></label><label>Reward target <span>R</span><input name="reward_risk" type="number" min="0.1" max="10" step="0.1" required></label></div>
-              <div class="fields"><label>Stop method<select name="stop_method"><option value="opposite_range">Opposite side of range</option><option value="range_multiple">Range-width multiple</option><option value="atr">Prior daily ATR multiple</option></select></label></div>
-              <div class="fields two"><label>Range stop multiple<input name="stop_width_multiple" type="number" min="0.1" max="10" step="0.1" required></label><label>ATR stop multiple<input name="atr_stop_multiple" type="number" min="0.1" max="10" step="0.1" required></label></div>
-              <div class="fields two"><label>Breakout buffer <span>× ATR</span><input name="breakout_buffer_atr" type="number" min="0" max="2" step="0.01" required></label><label>Entry cutoff <span>New York</span><input name="session_exit" type="time" step="60" required></label></div>
-              <div class="fields two"><label>Position exit<select name="position_exit"><option value="session_exit">Flat at the cutoff</option><option value="stop_or_target">Hold to stop or target</option><option value="end_of_day">Hold, flat daily at…</option><option value="friday_close">Hold, flat Friday at…</option></select></label><label>Flat time <span>New York</span><input name="flat_time" type="time" step="60"></label></div>
-              <div class="fields"><label>Trades per session<select name="trades_per_session"><option value="one">First breakout only</option><option value="one_per_direction">First breakout per direction</option><option value="after_close">Re-enter after a close</option></select></label></div>
-              <p class="hint" id="stopHint">The selected stop method controls which multiple is used.</p>
+            <div class="report-row-title"><strong>Excursions and holding time</strong><span class="legend"><i class="dot profit"></i>Win <i class="dot loss"></i>Loss</span></div>
+            <div class="chart-grid two">
+              <div class="chart-card"><div class="chart-heading"><strong>Profit vs MFE</strong><span id="corrProfitMfe"></span></div><div class="viz" id="scatterMfe"></div></div>
+              <div class="chart-card"><div class="chart-heading"><strong>Profit vs MAE</strong><span id="corrProfitMae"></span></div><div class="viz" id="scatterMae"></div></div>
+              <div class="chart-card"><div class="chart-heading"><strong>MFE vs MAE</strong><span id="corrMfeMae"></span></div><div class="viz" id="scatterMfeMae"></div></div>
+              <div class="chart-card"><div class="chart-heading"><strong>Profit vs holding time</strong><span id="corrHold"></span></div><div class="viz" id="scatterHold"></div></div>
             </div>
-
-            <details class="advanced" id="trailGroup"><summary>Trailing stop <span class="chip" id="trailChip">Off</span></summary>
-              <div class="fields two"><label>Trail <span>× ATR</span><input name="trail_atr_multiple" type="number" min="0.1" max="10" step="0.1" placeholder="off"></label><label>Starts at <span>R</span><input name="trail_activation_r" type="number" min="0" max="10" step="0.1" required></label></div>
-              <div class="fields"><label>ATR period <span>entry-timeframe bars</span><input name="trail_atr_period" type="number" min="1" max="1000" step="1" required></label></div>
-              <p class="hint">With a trail set there is no fixed target: from the start level the stop follows each entry-bar close by the ATR multiple and only tightens. Leave it blank for a fixed target.</p>
-            </details>
-
-            <details class="advanced" id="guardGroup"><summary>Account protection <span class="chip" id="guardChip">Off</span></summary>
-              <div class="fields two"><label>Cut risk below <span>% under start</span><input name="risk_throttle_below_pct" type="number" min="0.1" max="50" step="0.1" placeholder="off"></label><label>… to risk <span>% equity</span><input name="risk_throttle_percent" type="number" min="0.01" max="2" step="0.01" placeholder="off"></label></div>
-              <div class="fields two"><label>Daily loss stop <span>% under day start</span><input name="daily_loss_stop_pct" type="number" min="0.1" max="50" step="0.1" placeholder="off"></label><label>Hard stop <span>% under start</span><input name="equity_stop_pct" type="number" min="0.1" max="50" step="0.1" placeholder="off"></label></div>
-              <p class="hint">The EA's v1.40 guards, measured from the starting balance. The backtest checks them at each entry; the EA checks every tick and also closes its positions at the hard stop. Leave a box blank to switch that guard off.</p>
-            </details>
-
-            <details class="advanced" id="costsGroup"><summary>Costs &amp; account <span class="chip" id="costsChip">—</span></summary>
-              <div class="fields two"><label>Starting balance <span>USD</span><input name="initial_equity" type="number" min="100" max="1000000" step="100" required></label><label>Spread multiplier<input name="spread_multiplier" type="number" min="0.1" max="10" step="0.1" required></label></div>
-              <div class="fields two"><label>Slippage <span>price</span><input name="slippage_price" type="number" min="0" max="10" step="0.01" required></label><label>Zero-spread fallback <span>price</span><input name="fallback_spread_price" type="number" min="0" max="10" step="0.01" required></label></div>
-              <div class="fields two"><label>Commission <span>USD/lot/side</span><input name="commission_per_lot_side" type="number" min="0" max="100" step="0.01" required></label><label>Commission <span>% notional/side</span><input name="commission_rate_pct_side" type="number" min="0" max="1" step="0.0001" required></label></div>
-              <div class="fields"><label>Overnight financing <span>% a year of notional, per night</span><input name="financing_pct_annual" type="number" min="0" max="50" step="0.1" required></label></div>
-              <p class="hint">Costs are modelled assumptions. The run uses M1 bars and their recorded spread.</p>
-            </details>
-
-            <label class="check-row"><input id="tickCheck" type="checkbox"><span><strong>Check selected exits against native ticks</strong><small>Spot-check only; the backtest itself remains M1-based.</small></span></label>
-            <button class="run-button" id="runButton" type="submit"><span>▶</span> Run backtest <span class="arrow">↗</span></button>
-            <p class="form-note">One run at a time. Data stays on this computer. No MT5 orders are placed.</p>
-          </form>
-          <div class="walk-forward-block" id="walkForwardSetup" role="tabpanel" hidden>
-            <div class="eyebrow">FIXED RESEARCH TEST</div>
-            <h3>Annual walk-forward</h3>
-            <p>Choose the ATR breakout buffer using three past years, then test it on the next year. The four test years are 2021–2024.</p>
-            <div class="plan-tags"><span>08:20 NY</span><span>60 min range</span><span>2R target</span><span>0.5% risk</span></div>
-            <p class="hint">Buffers: 0.25, 0.35, 0.45, 0.55 × prior daily ATR. This run uses the frozen plan and cached M1 data; the fields above do not change it. The 2025+ holdout stays sealed. The candidates came from earlier development research, so this is not final validation.</p>
-            <button class="run-button secondary-button" id="runWalkForwardButton" type="button">Run walk-forward <span class="arrow">↗</span></button>
-          </div>
-        </section>
-
-        <div class="right-column">
-          <section class="panel live-panel">
-            <div class="panel-heading"><div><span class="section-index">02 / RUN STATUS</span><h2 id="runTitle">Ready to test</h2></div><div class="heading-actions"><button type="button" class="link-button" id="useSettings" hidden>Load these settings</button><span class="state-pill" id="statePill">IDLE</span></div></div>
-            <p class="muted" id="runSubtitle">Choose parameters and start a run, or select a previous result below.</p>
-            <div class="progress-header"><span id="stageLabel">Waiting for a run</span><strong id="percentLabel">0%</strong></div>
-            <div class="progress-track" role="progressbar" aria-label="Research run progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" id="progressTrack"><div id="progressFill"></div></div>
-            <div class="stat-grid">
-              <div class="stat"><span>Net return</span><strong id="netReturn">—</strong></div><div class="stat"><span>Mean net R</span><strong id="meanR">—</strong></div><div class="stat"><span>Max closed DD</span><strong id="maxDD">—</strong></div><div class="stat"><span>Trades</span><strong id="tradeCount">—</strong></div><div class="stat"><span>Monthly volatility</span><strong id="monthlyVol">—</strong></div><div class="stat"><span>Sharpe (ann.)</span><strong id="sharpeRatio">—</strong></div>
-            </div>
-            <div class="chart-heading"><strong>Closed-equity drawdown</strong><span id="chartHint">Select a completed run</span></div>
-            <div class="chart-wrap"><svg id="drawdownChart" viewBox="0 0 800 140" preserveAspectRatio="none" role="img" aria-label="Closed-trade drawdown curve"><line x1="0" y1="4" x2="800" y2="4" class="grid-line"></line><line x1="0" y1="70" x2="800" y2="70" class="grid-line"></line><line x1="0" y1="136" x2="800" y2="136" class="grid-line"></line><path id="drawdownFill" class="dd-fill"></path><path id="drawdownLine" class="dd-line"></path></svg></div>
-            <div class="fold-results" id="foldResults" hidden>
-              <div class="chart-heading"><strong>Walk-forward folds</strong><span>Selected on prior years only</span></div>
-              <div class="fold-scroll"><table><thead><tr><th>Train</th><th>Test</th><th>Buffer</th><th>Train R</th><th>Trades</th><th>Test R</th><th>Return</th><th>Max DD</th></tr></thead><tbody id="foldBody"></tbody></table></div>
-              <p class="hint">These years were unseen by each fold’s selection step, but the buffer candidates came from earlier 2018–2024 research. Results use modeled M1 fills and closed-trade drawdown.</p>
-            </div>
-            <details class="run-log"><summary>Run log <span>⌄</span></summary><pre id="logText">No run selected.</pre></details>
-          </section>
-
-          <section class="panel report-panel">
-            <div class="panel-heading"><div><span class="section-index">03 / TESTER REPORT</span><h2>Strategy tester report</h2></div><span class="muted tiny" id="reportHint">Select a completed run</span></div>
-            <div class="report-empty" id="reportEmpty">The report appears when a completed run is selected.</div>
-            <div id="reportBody" hidden>
-              <div class="report-stats" id="reportStats"></div>
-              <div class="chart-card"><div class="chart-heading"><strong>Balance</strong><span id="balanceHint"></span></div><div class="viz viz-tall" id="balanceChart"></div></div>
-              <div class="report-row-title"><strong>Entries</strong><span>Count of trades by entry time, New York</span></div>
-              <div class="chart-grid">
-                <div class="chart-card"><div class="chart-heading"><strong>By hour</strong></div><div class="viz" id="entriesHour"></div></div>
-                <div class="chart-card"><div class="chart-heading"><strong>By weekday</strong></div><div class="viz" id="entriesWeekday"></div></div>
-                <div class="chart-card"><div class="chart-heading"><strong>By month</strong></div><div class="viz" id="entriesMonth"></div></div>
-              </div>
-              <div class="report-row-title"><strong>Profits and losses</strong><span class="legend"><i class="swatch profit"></i>Profit <i class="swatch loss"></i>Loss</span></div>
-              <div class="chart-grid">
-                <div class="chart-card"><div class="chart-heading"><strong>By hour</strong></div><div class="viz" id="pnlHour"></div></div>
-                <div class="chart-card"><div class="chart-heading"><strong>By weekday</strong></div><div class="viz" id="pnlWeekday"></div></div>
-                <div class="chart-card"><div class="chart-heading"><strong>By month</strong></div><div class="viz" id="pnlMonth"></div></div>
-              </div>
-              <div class="report-row-title"><strong>Excursions and holding time</strong><span class="legend"><i class="dot profit"></i>Winning trade <i class="dot loss"></i>Losing trade</span></div>
-              <div class="chart-grid two">
-                <div class="chart-card"><div class="chart-heading"><strong>Profit vs MFE</strong><span id="corrProfitMfe"></span></div><div class="viz" id="scatterMfe"></div></div>
-                <div class="chart-card"><div class="chart-heading"><strong>Profit vs MAE</strong><span id="corrProfitMae"></span></div><div class="viz" id="scatterMae"></div></div>
-                <div class="chart-card"><div class="chart-heading"><strong>MFE vs MAE</strong><span id="corrMfeMae"></span></div><div class="viz" id="scatterMfeMae"></div></div>
-                <div class="chart-card"><div class="chart-heading"><strong>Profit vs holding time</strong><span id="corrHold"></span></div><div class="viz" id="scatterHold"></div></div>
-              </div>
-              <p class="hint">Money values in account currency. MFE/MAE are each trade's best and worst open profit, from M1 bars. Equity drawdown is a worst-case estimate (every open position at its own MAE at once); margin and deposit load are not modelled.</p>
-            </div>
-          </section>
-
-          <section class="panel trades-panel">
-            <div class="panel-heading"><div><span class="section-index">04 / TRADES</span><h2>Individual trades</h2></div><span class="muted tiny" id="tradeListCount">0 trades</span></div>
-            <div class="trade-toolbar">
-              <div class="trade-tabs" role="tablist" aria-label="Trade filter">
-                <button type="button" data-filter="all" aria-selected="true">All</button>
-                <button type="button" data-filter="win" aria-selected="false">Wins</button>
-                <button type="button" data-filter="loss" aria-selected="false">Losses</button>
-              </div>
-              <button type="button" class="download-link" id="tradesDownload">Download CSV ⭳</button>
-            </div>
-            <div class="trade-scroll">
-              <table><thead><tr><th>Date</th><th>Dir</th><th>Entry</th><th>Stop</th><th id="targetHead">Target</th><th>Exit</th><th>Reason</th><th>R</th><th>P/L</th><th>Equity</th></tr></thead><tbody id="tradeBody"><tr><td colspan="10" class="empty">Select a completed run</td></tr></tbody></table>
-            </div>
-          </section>
-
-          <section class="panel history-panel">
-            <div class="panel-heading"><div><span class="section-index">05 / RECORD</span><h2>Run history</h2></div><span class="muted tiny" id="runCount">0 runs</span></div>
-            <div class="history-scroll"><table><thead><tr><th></th><th>Started</th><th>Setup</th><th>Trades</th><th>Mean R</th><th>Return</th><th>Max DD</th><th>Status</th></tr></thead><tbody id="historyBody"><tr><td colspan="8" class="empty">Loading history…</td></tr></tbody></table></div>
-            <div class="history-footer"><span>Click a run to inspect it; tick the box to add it to Compare.</span><span id="holdoutFooter">Holdout status</span></div>
-          </section>
-
-          <section class="panel compare-panel" id="comparePanel" hidden>
-            <div class="panel-heading"><div><span class="section-index">06 / COMPARE</span><h2>Compare runs</h2></div><button type="button" class="link-button" id="clearCompare">Clear</button></div>
-            <div class="chart-heading"><strong>Closed-equity drawdown</strong><span id="compareChartHint"></span></div>
-            <div class="chart-wrap"><svg id="compareChart" viewBox="0 0 800 140" preserveAspectRatio="none" role="img" aria-label="Overlaid closed-trade drawdown curves"><line x1="0" y1="4" x2="800" y2="4" class="grid-line"></line><line x1="0" y1="70" x2="800" y2="70" class="grid-line"></line><line x1="0" y1="136" x2="800" y2="136" class="grid-line"></line><g id="compareLines"></g></svg></div>
-            <div class="compare-legend" id="compareLegend"></div>
-            <div class="compare-scroll"><table><thead id="compareHead"></thead><tbody id="compareBody"></tbody></table></div>
-          </section>
+          </details>
         </div>
-      </div>
-      <footer>ORB RESEARCH <span>·</span> FTMO historical data <span>·</span> Research tool, not an order terminal</footer>
+      </section>
+
+      <section class="panel trades-panel">
+        <div class="panel-heading"><div><h2>Trades</h2><p class="muted tiny">Click a trade to see its chart.</p></div><span class="muted tiny" id="tradeListCount">0 trades</span></div>
+        <div class="trade-toolbar">
+          <div class="trade-tabs" role="tablist" aria-label="Trade filter">
+            <button type="button" data-filter="all" aria-selected="true">All</button>
+            <button type="button" data-filter="win" aria-selected="false">Wins</button>
+            <button type="button" data-filter="loss" aria-selected="false">Losses</button>
+          </div>
+          <button type="button" class="download-link" id="tradesDownload">Download CSV</button>
+        </div>
+        <div class="trade-scroll">
+          <table><thead><tr><th>Date</th><th>Dir</th><th>Entry</th><th>Stop</th><th id="targetHead">Target</th><th>Exit</th><th>Reason</th><th>R</th><th>P/L</th><th>Equity</th></tr></thead><tbody id="tradeBody"><tr><td colspan="10" class="empty">Select a completed run</td></tr></tbody></table>
+        </div>
+      </section>
+
+      <section class="panel history-panel">
+        <div class="panel-heading"><h2>Run history</h2><span class="muted tiny" id="runCount">0 runs</span></div>
+        <div class="history-scroll"><table><thead><tr><th></th><th>Started</th><th>Setup</th><th>Trades</th><th>Mean R</th><th>Return</th><th>Max DD</th><th>Status</th></tr></thead><tbody id="historyBody"><tr><td colspan="8" class="empty">Loading history…</td></tr></tbody></table></div>
+        <div class="history-footer"><span>Click a run to open it; tick the box to compare.</span><span id="holdoutFooter"></span></div>
+      </section>
+
+      <section class="panel compare-panel" id="comparePanel" hidden>
+        <div class="panel-heading"><h2>Compare runs</h2><button type="button" class="link-button" id="clearCompare">Clear</button></div>
+        <div class="chart-heading"><strong>Closed-equity drawdown</strong><span id="compareChartHint"></span></div>
+        <div class="chart-wrap"><svg id="compareChart" viewBox="0 0 800 140" preserveAspectRatio="none" role="img" aria-label="Overlaid closed-trade drawdown curves"><line x1="0" y1="4" x2="800" y2="4" class="grid-line"></line><line x1="0" y1="70" x2="800" y2="70" class="grid-line"></line><line x1="0" y1="136" x2="800" y2="136" class="grid-line"></line><g id="compareLines"></g></svg></div>
+        <div class="compare-legend" id="compareLegend"></div>
+        <div class="compare-scroll"><table><thead id="compareHead"></thead><tbody id="compareBody"></tbody></table></div>
+      </section>
     </main>
   </div>
 
-  <div class="auth-backdrop" id="authBackdrop"><div class="auth-card"><div class="brand-mark large">◈</div><div class="eyebrow">PRIVATE RESEARCH DESK</div><h2>Unlock your workspace</h2><p>Enter the access key printed when the local worker starts. Your broker data never leaves this machine.</p><form id="authForm"><label>Access key<input id="accessKey" type="password" autocomplete="current-password" required placeholder="Paste your access key"></label><button class="run-button" type="submit">Open dashboard <span class="arrow">→</span></button></form><small id="authError"></small></div></div>
+  <dialog class="trade-dialog" id="tradeDialog" aria-labelledby="tradeTitle">
+    <div class="trade-head">
+      <div><h2 id="tradeTitle">Trade</h2><p class="muted tiny" id="tradeSubtitle"></p></div>
+      <div class="heading-actions"><button type="button" class="nav-button" id="tradePrev" aria-label="Previous trade">‹</button><button type="button" class="nav-button" id="tradeNext" aria-label="Next trade">›</button><button type="button" class="nav-button" id="tradeClose" aria-label="Close">✕</button></div>
+    </div>
+    <div class="trade-facts" id="tradeFacts"></div>
+    <div class="viz trade-chart" id="tradeChart"></div>
+    <div class="trade-legend"><span><i class="key range"></i>Opening range</span><span><i class="key entry"></i>Entry</span><span><i class="key stop"></i>Stop loss</span><span><i class="key target"></i>Take profit</span><span><i class="key exit"></i>Exit</span></div>
+  </dialog>
+
+  <div class="auth-backdrop" id="authBackdrop"><div class="auth-card"><div class="brand-mark large">◈</div><h2>Unlock your workspace</h2><p>Enter the access key printed when the local worker starts. Your broker data never leaves this machine.</p><form id="authForm"><label>Access key<input id="accessKey" type="password" autocomplete="current-password" required placeholder="Paste your access key"></label><button class="run-button" type="submit">Open dashboard</button></form><small id="authError"></small></div></div>
   <div id="vizTip" class="viz-tip" role="tooltip" hidden></div>
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
 </body>
