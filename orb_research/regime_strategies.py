@@ -111,3 +111,28 @@ def r4_overnight_long(close: pd.DataFrame, spread: pd.DataFrame, first_open: pd.
         ret = _fill(1, entry, exit_, sp_close[i], s_out, slip) - swap_per_night * nights
         rows.append({"date": close.index[i], "trades": 1, "ret": ret, "worst": min(0.0, ret)})
     return pd.DataFrame(rows).set_index("date") if rows else _empty()
+
+
+def l1_letf_close(close: pd.DataFrame, spread: pd.DataFrame, slip: float = 0.1, signal_minute: int = 945,
+                  lookback: int = 20) -> pd.DataFrame:
+    """L1 of docs/LETF_CLOSE_PLAN.md: on a big close-to-15:45 move, trade its direction to 16:00."""
+    session_open = int(close.columns[0])
+    grid = close.to_numpy()
+    col = signal_minute - 1 - session_open
+    prev_close = pd.Series(grid[:, -1]).shift(1).to_numpy()
+    move = grid[:, col] / prev_close - 1
+    typical = pd.Series(np.abs(move)).rolling(lookback, min_periods=15).mean().shift(1).to_numpy()
+    rows = []
+    for i, day in enumerate(close.index):
+        last = grid[i, -1]
+        if not np.isfinite([move[i], typical[i], last]).all():
+            continue
+        if abs(move[i]) <= typical[i]:
+            rows.append({"date": day, "trades": 0, "ret": 0.0, "worst": 0.0})
+            continue
+        sp = spread.iloc[i].to_numpy()
+        direction = 1 if move[i] > 0 else -1
+        ret = _fill(direction, grid[i, col], last, sp[col], sp[-1], slip)
+        low = _marked_low(direction, grid[i, col], grid[i, col:], sp[col], sp[col:], slip)
+        rows.append({"date": day, "trades": 1, "ret": ret, "worst": min(0.0, low, ret)})
+    return pd.DataFrame(rows).set_index("date") if rows else _empty()

@@ -39,3 +39,16 @@ def test_r4_holds_overnight_and_pays_three_nights_of_swap_over_a_weekend() -> No
     close, spread, first = _grid([friday, monday])
     trade = r4_overnight_long(close, spread, first, swap_per_night=0.0002, slip=0.0).iloc[0]
     assert trade.ret == pytest.approx(0.01 - 3 * 0.0002)
+
+
+def test_l1_follows_a_big_day_from_15_45_to_the_close() -> None:
+    from orb_research.regime_strategies import l1_letf_close
+
+    dates = [d.date().isoformat() for d in pd.bdate_range("2023-01-02", periods=22)]
+    # each day closes 0.2% above the last (a typical close-to-15:45 move of about 0.2%)
+    days = [_day_bars(d, {}, 100.0 * 1.002 ** k) for k, d in enumerate(dates[:21])]
+    prev = 100.0 * 1.002 ** 20
+    last = _day_bars(dates[21], {"15:00": prev * 1.02, "15:50": prev * 1.03}, prev)   # +2% by 15:45
+    close, spread, _ = _grid([*days, last])
+    final = l1_letf_close(close, spread, slip=0.0).iloc[-1]
+    assert final.trades == 1 and final.ret == pytest.approx(1.03 / 1.02 - 1)
