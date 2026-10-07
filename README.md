@@ -217,6 +217,34 @@ Not built: pullback and reversal variants (they failed in his own tests), the
 10:00-breakout filter (he flagged it as likely overfit), and the London and
 previous-day-high/low strategies, which are separate systems.
 
+## Current candidate and forward test (7 October 2026)
+
+The project's live line of research is one frozen candidate: the video EA's rules on
+FTMO `US100.cash`. The rules are a 09:30 New York 15-minute range, the first 15-minute
+close outside it per direction before 12:00, and positions held to the stop or a 1.5R
+target. It is the dashboard's default preset, at the forward test's 0.5% risk.
+
+- **[docs/US100_CANDIDATE_PLAN.md](docs/US100_CANDIDATE_PLAN.md)** froze it and its
+  checks before they ran. It passed all four (years, 27 nearby settings, doubled costs,
+  walk-forward), but 2026 to date is negative. FTMO sizing picked 0.5% risk: about an
+  84% chance of passing a 2-step challenge, in about 11 months.
+- **[docs/BRUTE_FORCE_SEARCH.md](docs/BRUTE_FORCE_SEARCH.md)** searched 9,216
+  combinations on US100, US500 and gold, ranked on 2021-10 to 2024 and scored on
+  2025–26. **No edge found**: the best training combinations fell to about zero or
+  below, and their deflated Sharpe ratios are all under 0.02. Gold's training rank did
+  carry into the test, with its top decile at +0.053R. That is a lead for a future study
+  pre-registered on future data only, not something to tune now.
+- **[docs/US100_FORWARD_TEST.md](docs/US100_FORWARD_TEST.md)** is the only clean test
+  left, written before the first live trade. Two FTMO free trials run EA
+  [`mt5/ORB_Framework.mq5`](mt5/ORB_Framework.mq5) v1.30 at 0.5% and 1.5% risk.
+  - v1.30 is the user's v1.20 with separate range and entry timeframes and the
+    candidate as its defaults. Its trade log now appends instead of being overwritten
+    at each restart. It compiles with 0 errors and 0 warnings.
+  - `python -m scripts.forward_reconcile --log <EA log>` checks each month that the
+    live EA trades the backtested rules. It then applies the pre-declared rules: a stop
+    below −0.24R mean at 60 trades, a verdict at 150 trades, and drawdown stops at
+    12.2% and 33.3%.
+
 ## Index tests: FTMO US100 and US500 (7 October 2026)
 
 The creator's EA and bot trade US100 and the S&P 500, not gold, so the same configs

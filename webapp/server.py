@@ -30,10 +30,19 @@ from orb_research.tester_report import tester_report
 
 ROOT = Path(__file__).resolve().parents[1]
 STATIC = Path(__file__).resolve().parent / "static"
-CONFIG = ROOT / "configs" / "orb_framework.json"
+CONFIG = ROOT / "configs" / "indices" / "ftmo_us100_orb_framework_15_15.json"
 # Sidebar presets: each brings its own data window and broker clock, then every editable
 # field stays tunable.  The first entry whose file is the app's base config is the default.
 PRESETS = (
+    {"id": "us100_candidate", "label": "US100 candidate · forward test (0.5%)",
+     "summary": "The frozen candidate (docs/US100_CANDIDATE_PLAN.md): FTMO US100.cash, 09:30 NY "
+                "15m range, first 15m close outside it per direction before 12:00, held to stop "
+                "or 1.5R, at the forward test's 0.5% risk. Passed all robustness checks; 2026 negative.",
+     "config": "configs/indices/ftmo_us100_orb_framework_15_15.json", "overrides": {"risk_percent": 0.5}},
+    {"id": "us100_candidate_1p5", "label": "US100 candidate · 1.5% risk",
+     "summary": "The same frozen rules at 1.5% risk, the forward test's second account: about a "
+                "coin flip to pass an FTMO challenge, roughly two months when it does.",
+     "config": "configs/indices/ftmo_us100_orb_framework_15_15.json", "overrides": {"risk_percent": 1.5}},
     {"id": "orb_framework", "label": "Video EA · 15m range, 5m entries",
      "summary": "ORB-framework EA as shown: 09:30 NY range, first 5m close outside it per "
                 "direction, no entries from 12:00, held to stop or 1.5R, 2% risk.",

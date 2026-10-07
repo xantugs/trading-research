@@ -72,7 +72,9 @@ def test_every_preset_loads_and_round_trips_through_validation(tmp_path) -> None
     app = ResearchWeb(root=tmp_path, config_path=CONFIG)
     listed = app.preset_list()
     assert [preset["id"] for preset in listed] == [spec["id"] for spec in PRESETS]
-    assert app.default_preset == "orb_framework"
+    assert app.default_preset == "us100_candidate"
+    assert app.presets["us100_candidate"][1].risk_percent == 0.5
+    assert app.presets["us100_candidate"][1].symbol == "US100.cash"
     for preset in listed:
         _, config = app.presets[preset["id"]]
         assert validate_parameters(config, preset["parameters"])["broker_clock"] == preset["window"]["broker_clock"]
