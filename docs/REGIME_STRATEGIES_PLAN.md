@@ -70,3 +70,10 @@ settings.
 - 2025–26 has already been used to judge S2, which these rules partly oppose. So the
   2023–24 condition and the t ≥ 2.5 bar carry the weight.
 - Anything that passes then goes to the demo next to S2 before any money is at risk.
+
+## Amendment 1 (8 October 2026, from a unit test, before any run on market data)
+
+R2's stop, as written ("the move at 2σ(t) or more"), fires at once when the entry deviation
+is already beyond 2σ(t), which no protective stop intends. It is now the deviation
+reaching **max(2σ(t), the entry deviation + σ(t))** against the trade, so the stop always
+sits at least σ(t) beyond the entry. Nothing else changes.
