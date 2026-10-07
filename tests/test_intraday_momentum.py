@@ -102,3 +102,15 @@ def test_gap_fade_trades_large_gaps_against_their_direction_until_filled() -> No
     daily = gap_fade(close, spread, first, slip=0.0)
     final = daily.iloc[-1]
     assert final.trades == 1 and final.ret == pytest.approx(1.0 / 101.0)
+
+
+def test_s2_resting_stop_exits_a_long_at_the_stop_level() -> None:
+    days = pd.bdate_range("2023-01-02", periods=16)
+    quiet = [_day_bars(d.date().isoformat(), {}, 100.0) for d in days[:15]]
+    # long at 11:30 (102), then a slide to 99 at 13:10: the 1.25% stop (100.725) fills there at 99
+    last = _day_bars(days[15].date().isoformat(), {"11:00": 102.0, "13:10": 99.0}, 100.0)
+    close, spread, first = session_grid(pd.concat([*quiet, last]), np.zeros(16 * 390))
+    trades: list = []
+    final = s2_noise_area(close, spread, first, slip=0.0, record=trades, stop_pct=0.0125).iloc[-1]
+    assert trades[0]["stopped"] and trades[0]["exit_minute"] == 791          # the 13:10 bar
+    assert final.ret == pytest.approx(99.0 / 102.0 - 1)                       # worse of stop and close

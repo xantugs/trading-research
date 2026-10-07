@@ -1,6 +1,6 @@
 # S2 on FTMO: demo forward test (8 October 2026)
 
-**EA:** [`mt5/S2_NoiseArea.mq5`](../mt5/S2_NoiseArea.mq5) v1.00. It compiles in MetaEditor
+**EA:** [`mt5/S2_NoiseArea.mq5`](../mt5/S2_NoiseArea.mq5) v1.10. It compiles in MetaEditor
 with 0 errors and 0 warnings, and trades S2 the way `orb_research/intraday_momentum.py`
 does.
 
@@ -64,3 +64,37 @@ those days. It reports:
   empty days in its 14-day window, so it uses the same days in all but rare cases.
 - The daily and hard stops are not in the sizing simulation. They can only reduce
   breaches, at the cost of a few days cut short.
+
+## v1.10: a stop-loss on every order, and The5ers
+
+The5ers allows EAs, provided you own the source code and **every trade carries a visible
+stop-loss**. v1.10 sets one on every order, `InpStopPct` = **1.25% of price** from the
+entry. That is beyond 99.5% of S2's 2010–2017 adverse moves (99th percentile 1.11%,
+maximum 1.79%), so it rarely triggers.
+- **2018–2024:** 15 of 1,171 trades stopped; +5.63 against +5.87 bps a day (t 3.64).
+- **FTMO 2025–26:** 1 of 328 trades stopped, with no change.
+
+The engine models the stop as `s2_noise_area(..., stop_pct=0.0125)`: the first minute
+close at or beyond the stop, filled at the stop or that close, whichever is worse.
+
+**The5ers High Stakes 2-Step ($2.5k for $19).**
+- **Targets:** +10%, then +5%.
+- **Limits:** 5% daily loss and 10% maximum loss.
+- **Profitable days:** at least 3 per phase, each up by at least 0.5% of the initial
+  balance.
+- **Leverage:** up to 1:100.
+
+**Presets:**
+
+| Preset | Leverage | Use |
+|---|---|---|
+| `S2_5ers_highstakes_steady_2x` | 2× | the forward test |
+| `S2_5ers_highstakes_fast_8x` | 8× | the sizing study's fast pass |
+
+At 8×, a normal 0.5% adverse move is about 4% of equity, so the EA's 4.5% daily stop
+fires often. That preset is close to a coin flip.
+
+**Check the clock before attaching.** The session inputs assume a server at New York + 7
+hours (16:30 = 09:30 New York), which is what a server on GMT+2/+3 switching on US dates
+gives. If the server switches on EU dates, the session sits an hour off for a few weeks a
+year. Check that the US100/NAS100 chart's big opening move prints at 16:30 server time.

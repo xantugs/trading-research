@@ -1,0 +1,7 @@
+; S2 on The5ers High Stakes 2-Step (5% daily, 10% max): steady forward test, 2x
+InpLeverage=2.0
+InpStopPct=1.25
+InpDailyStopPct=4.5
+InpHardStopPct=9.5
+InpTrailingHardStop=false
+InpNewsFilter=false

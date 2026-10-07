@@ -1,0 +1,7 @@
+; S2 on The5ers High Stakes 2-Step: fast-pass size from the sizing study, 8x
+InpLeverage=8.0
+InpStopPct=1.25
+InpDailyStopPct=4.5
+InpHardStopPct=9.5
+InpTrailingHardStop=false
+InpNewsFilter=false

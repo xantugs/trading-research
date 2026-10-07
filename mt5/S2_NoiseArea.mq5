@@ -3,6 +3,9 @@
 //|      Noise-area intraday momentum (Zarattini, Aziz & Barbon 2024) |
 //+------------------------------------------------------------------+
 //
+//  v1.10 - every order carries a visible stop-loss InpStopPct from the entry (The5ers requires
+//          one): 1.25% of price, beyond 99.5% of the 2010-2017 adverse moves, hit by 15 of
+//          1,171 trades in 2018-2024 (+5.63 against +5.87 bps a day without it).
 //  v1.00 - the S2 strategy of docs/INTRADAY_MOMENTUM_PLAN.md, as the Python engine
 //  (orb_research/intraday_momentum.py) trades it:
 //   - session 09:30-16:00 New York = 16:30-23:00 on FTMO's server (New York + 7 h);
@@ -31,12 +34,12 @@
 //
 //+------------------------------------------------------------------+
 #property copyright   "orb-backtest"
-#property version     "1.00"
+#property version     "1.10"
 #property description "Noise-area intraday momentum (S2). All times are BROKER SERVER time."
 
 #include <Trade/Trade.mqh>
 
-#define S2_VERSION "1.00"
+#define S2_VERSION "1.10"
 #define MAX_CHECKPOINTS 64
 
 input group "Session (broker server time; FTMO = New York + 7 h)"
@@ -48,8 +51,9 @@ input int    InpStepMinutes     = 30;     // Minutes between checkpoints
 input int    InpLookback        = 14;     // Noise-area lookback (sessions)
 input int    InpMinLookback     = 10;     // Sessions with the price required for sigma
 
-input group "Sizing"
+input group "Sizing and stop"
 input double InpLeverage        = 1.0;    // Position notional / account equity
+input double InpStopPct         = 1.25;   // Stop-loss on every order, % of price from the entry (0 = none)
 
 input group "Account protection"
 input double InpStartBalance    = 0.0;    // Starting balance (0 = balance when first attached, remembered)
@@ -99,6 +103,8 @@ int OnInit()
       return(Fail("Lookback settings are invalid"));
    if(InpLeverage <= 0.0 || InpLeverage > 50.0)
       return(Fail("Leverage must be between 0 and 50"));
+   if(InpStopPct < 0.0 || InpStopPct >= 20.0)
+      return(Fail("Stop-loss % must be between 0 and 20"));
    if(InpDailyStopPct < 0.0 || InpDailyStopPct >= 100.0 || InpHardStopPct < 0.0 || InpHardStopPct >= 100.0)
       return(Fail("Protection percentages must be between 0 and 100"));
    if(SymbolInfoString(_Symbol, SYMBOL_CURRENCY_PROFIT) != AccountInfoString(ACCOUNT_CURRENCY))
@@ -123,9 +129,9 @@ int OnInit()
    g_peakDayBalance = GlobalVariableCheck(g_peakKey) ? GlobalVariableGet(g_peakKey) : g_startBalance;
 
    OpenLog();
-   PrintFormat("S2 v%s on %s: session %02d:%02d-%02d:%02d server, %d checkpoints every %d min, lookback %d (min %d), leverage %.2fx",
+   PrintFormat("S2 v%s on %s: session %02d:%02d-%02d:%02d server, %d checkpoints every %d min, lookback %d (min %d), leverage %.2fx, stop %.2f%%",
                S2_VERSION, _Symbol, InpOpenHour, InpOpenMinute, InpCloseHour, InpCloseMinute, g_checkpoints,
-               InpStepMinutes, InpLookback, InpMinLookback, InpLeverage);
+               InpStepMinutes, InpLookback, InpMinLookback, InpLeverage, InpStopPct);
    PrintFormat("  Protection: start %.2f, daily stop -%.1f%%, hard stop -%.1f%% (%s), news filter %s",
                g_startBalance, InpDailyStopPct, InpHardStopPct, InpTrailingHardStop ? "trailing" : "static",
                InpNewsFilter ? "on" : "off");
@@ -278,8 +284,15 @@ void Checkpoint(const int k, const datetime at)
       const double lots = Lots();
       if(lots <= 0.0)
          return;
-      const bool sent = direction > 0 ? trade.Buy(lots, _Symbol, 0.0, 0.0, 0.0, InpComment)
-                                      : trade.Sell(lots, _Symbol, 0.0, 0.0, 0.0, InpComment);
+      double sl = 0.0;
+      if(InpStopPct > 0.0)
+        {
+         const double reference = direction > 0 ? SymbolInfoDouble(_Symbol, SYMBOL_ASK) : SymbolInfoDouble(_Symbol, SYMBOL_BID);
+         sl = NormalizeDouble(direction > 0 ? reference * (1.0 - InpStopPct / 100.0)
+                                            : reference * (1.0 + InpStopPct / 100.0), _Digits);
+        }
+      const bool sent = direction > 0 ? trade.Buy(lots, _Symbol, 0.0, sl, 0.0, InpComment)
+                                      : trade.Sell(lots, _Symbol, 0.0, sl, 0.0, InpComment);
       if(!sent || (trade.ResultRetcode() != TRADE_RETCODE_DONE && trade.ResultRetcode() != TRADE_RETCODE_PLACED))
          PrintFormat("S2: order failed %u %s", trade.ResultRetcode(), trade.ResultRetcodeDescription());
       else

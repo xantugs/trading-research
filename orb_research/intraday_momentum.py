@@ -62,7 +62,8 @@ def s1_last_half_hour(close: pd.DataFrame, spread: pd.DataFrame, slip: float = 0
 
 
 def s2_noise_area(close: pd.DataFrame, spread: pd.DataFrame, first_open: pd.Series,
-                  slip: float = 0.1, lookback: int = 14, record: list | None = None) -> pd.DataFrame:
+                  slip: float = 0.1, lookback: int = 14, record: list | None = None,
+                  stop_pct: float | None = None) -> pd.DataFrame:
     """The session comes from the grid's columns: checkpoints every 30 minutes from the open
     + 30 to the close - 30, and everything flat at the close."""
     session_open, session_close = int(close.columns[0]), int(close.columns[-1]) + 1
@@ -94,8 +95,34 @@ def s2_noise_area(close: pd.DataFrame, spread: pd.DataFrame, first_open: pd.Seri
             values = _fill(position, entry, bids[ok], s_entry, spreads[ok], slip)
             return total + float(np.min(values))
 
+        def stopped(end_col: int):
+            """A resting stop `stop_pct` from the entry: the first minute close at or beyond it,
+            filled at the stop or that close, whichever is worse."""
+            if stop_pct is None or position == 0:
+                return None
+            level = entry * (1 - stop_pct) if position > 0 else entry * (1 + stop_pct)
+            for col in range(start_col + 1, end_col + 1):
+                px = row_close[col]
+                if np.isfinite(px) and ((position > 0 and px <= level) or (position < 0 and px >= level)):
+                    return col, (min(px, level) if position > 0 else max(px, level))
+            return None
+
+        def stop_out(hit) -> None:
+            nonlocal total, position
+            col, fill = hit
+            ret = _fill(position, entry, fill, s_entry, row_spread[col], slip)
+            total += ret
+            if record is not None:
+                record.append({"date": day, "direction": position, "entry_minute": entry_minute, "entry": entry,
+                               "exit_minute": session_open + col + 1, "exit": fill, "ret": ret, "stopped": True})
+            position = 0
+
         for k, minute in enumerate(checkpoints):
             price, s_now = prices[i, k], spread.at[day, minute - 1]
+            hit = stopped(minute - 1 - session_open)
+            if hit is not None:
+                worst = min(worst, marked_low(hit[0]))
+                stop_out(hit)
             if not np.isfinite(price):
                 continue
             if (position > 0 and price <= upper[k]) or (position < 0 and price >= lower[k]):
@@ -109,6 +136,10 @@ def s2_noise_area(close: pd.DataFrame, spread: pd.DataFrame, first_open: pd.Seri
             if position == 0 and (price > upper[k] or price < lower[k]):
                 position, entry, s_entry, trades = (1 if price > upper[k] else -1), price, s_now, trades + 1
                 start_col, entry_minute = minute - 1 - session_open, minute
+        hit = stopped(session_close - 1 - session_open)
+        if hit is not None:
+            worst = min(worst, marked_low(hit[0]))
+            stop_out(hit)
         if position:
             worst = min(worst, marked_low(session_close - 1 - session_open))
             ret = _fill(position, entry, last, s_entry, s_last, slip)
