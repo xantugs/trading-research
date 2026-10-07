@@ -89,3 +89,31 @@ All three scenarios are reported for every L.
   is the better one to hold.
 - Daily limits are checked on minute-close marked equity, not on ticks, so real breaches
   will be somewhat more frequent, most of all at the larger sizes.
+
+## Lifecycle: net dollars per month (planned 8 October 2026, before running)
+
+**Objective.** The most money, soonest, per $100k account, over the next 12 months
+(252 trading days).
+
+**The cycle.**
+1. Pay the fee and run the challenge at leverage Lc. If it fails, pay again and restart.
+2. Once funded, trade at leverage Lf.
+3. Every 21 trading days, any profit above the initial balance is paid out at the
+   profit split, and the balance resets to the initial balance.
+4. The first payout of each funded account also refunds that account's fee.
+5. If the funded account breaches a limit, pay the fee again and start a new challenge.
+
+**Assumptions.**
+- Fees: $499 for a 1-Step $100k, $540 for a 2-Step $100k.
+- Splits: 90% on 1-Step, 80% on 2-Step (conservative; FTMO quotes 90% at $100k).
+- After a payout, the 1-Step trailing maximum loss restarts from the initial balance.
+
+**Grid.**
+- 1-Step: Lc ∈ {1, 1.5, 2, 2.5, 3}, Lf ∈ {0.5, 1, 1.5, 2}.
+- 2-Step: Lc ∈ {1, 2, 3, 4}, Lf ∈ {0.5, 1, 1.5, 2}.
+
+1,000 paths per cell, under each of the three return scenarios.
+
+**Choice (fixed now).** For each account type, the (Lc, Lf) with the highest mean net per
+month under the **development** edge. The holdout and zero-edge results are reported next
+to it, with the chance of finishing the 12 months below zero.
