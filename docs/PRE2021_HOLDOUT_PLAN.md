@@ -92,3 +92,36 @@ relative jump in volatility between 09:00 and 10:00 New York falls at 09:30, or 
 09:28–09:29 in a few earlier years. There is never an hour's shift. HistData's coverage
 starts on 2010-11-14, so 2010 has six weeks of data; the "7 of 11 positive years" rule
 still counts it.
+
+## Results (8 October 2026)
+
+**Development round (FTMO 2021-10 to 2026-10, `develop`).** The baseline is +0.081R
+(t 2.44, 1,390 trades).
+
+| Family | Setting | Mean R | t | Trades | Eligible |
+|---|---|---|---|---|---|
+| D1 | `or_max_atr` 2.0 / 2.5 / 3.0 | −0.047 / +0.055 / +0.100 | −0.62 / 0.99 / 2.18 | 263 / 500 / 743 | none: all below 60% of trades |
+| D2 | `trend_sma_days` 20 / 50 / 100 | +0.078 / +0.101 / +0.099 | 1.65 / 2.11 / 2.05 | 685 / 683 / 668 | none: all below 60% of trades |
+| D3 | 5-min entries / `after_close` / both | +0.063 / +0.078 / +0.060 | 2.01 / 2.36 / 1.95 | 1,570 / 1,427 / 1,657 | finalist: `after_close` |
+
+**Holdout (HistData NSXUSD, 2010-11-14 to 2021-09-30, run once).**
+
+| Rule set | Mean R | t | Trades | Positive years, 2010–2020 | Verdict |
+|---|---|---|---|---|---|
+| H0, frozen candidate | **−0.009** | −0.39 | 2,965 | 4 of 11 | **fail** |
+| D3, `after_close` | −0.002 | −0.11 | 3,016 | 6 of 11 | fail |
+
+Yearly mean R for H0: 2010 −0.101, 2011 −0.024, 2012 +0.010, 2013 −0.112, 2014 +0.072,
+2015 −0.096, 2016 −0.038, 2017 −0.037, 2018 +0.020, 2019 +0.106, 2020 −0.022, and
+2021 (to September) +0.044.
+
+**Diagnostic, not used for the verdict.** With no spread and no slippage, H0 is +0.006R
+(t 0.27). The median stop is 86 times the modelled spread, so costs do not explain the
+result. Longs are +0.032R (t 1.03) and shorts −0.056R (t −1.71).
+
+**Verdict.** By the plan, **the frozen US100 candidate is not supported**. On 11 years of
+Nasdaq-100 data it never saw, it has no edge, before or after costs. Calibration showed
+the same rules give the same trades on both feeds where they overlap, so the difference is
+in the years. The +0.08R per trade of 2021–2026 now looks like a feature of that period
+rather than a lasting property of the opening-range breakout on this index. No finalist
+passes, and by rule 5 nothing more is tried on this holdout.
