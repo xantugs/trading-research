@@ -71,3 +71,24 @@ table is tried.
 - If H0 fails, the candidate is not supported, whatever the finalists show.
 
 **One round only.** No family, setting or rule is added after any holdout result is seen.
+
+## Amendment 1 (8 October 2026, after calibration, before any holdout run)
+
+The first calibration failed C1. The return correlation peaked at a 60-minute lag (0.62)
+instead of 0 (0.38). Split by season, winter aligned at lag 0 (0.90) and US summer time at
+−60 minutes (0.89). HistData's NSXUSD stamps are therefore New York wall-clock time with
+daylight saving, not the fixed UTC−5 its documentation states. The converter now reads them
+as `America/New_York`, and the cache was rebuilt from the same zips. This corrects the data
+only; no strategy setting changed.
+
+**Calibration after the fix: pass.**
+- **C1:** correlation 0.894 at lag 0, and at most 0.06 at ±60 minutes.
+- **C2:** 87.8% of FTMO's trades are matched, and the matched R values correlate at 0.949.
+  Mean R on the overlap is +0.104 on HistData (829 trades), against +0.090 on FTMO (907).
+
+**Clock check for the holdout years.** This uses absolute 1-minute price moves only, with
+no strategy returns. For every year from 2010 to 2024, in both seasons, the largest
+relative jump in volatility between 09:00 and 10:00 New York falls at 09:30, or at
+09:28–09:29 in a few earlier years. There is never an hour's shift. HistData's coverage
+starts on 2010-11-14, so 2010 has six weeks of data; the "7 of 11 positive years" rule
+still counts it.

@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """Download HistData.com free M1 ASCII bars and cache them as UTC monthly Parquet.
 
-HistData stamps every bar in EST without daylight saving (a fixed UTC-5), so 09:30 New
-York is 09:30 in winter and 08:30 in summer in its files; this converts every bar to UTC.
+HistData says its bars are stamped in EST without daylight saving, but checked against
+FTMO's US100 bars (2021-10 to 2024) the NSXUSD stamps follow New York wall-clock time,
+daylight saving included: winter aligns at UTC-5, summer at UTC-4.  So every bar is read
+as America/New_York local time and converted to UTC.
 Bars are bid quotes with no spread and no volume, so the cache stores both as 0 and a
 study must model the spread itself.  The yearly zips are kept next to the cache.
 
@@ -55,8 +57,12 @@ def parse_zip(raw: bytes) -> pd.DataFrame:
         text = archive.read(name).decode("utf-8")
     frame = pd.read_csv(io.StringIO(text), sep=";", header=None,
                         names=["stamp", "open", "high", "low", "close", "volume"])
-    est = pd.to_datetime(frame.stamp, format="%Y%m%d %H%M%S")
-    index = pd.DatetimeIndex(est + pd.Timedelta(hours=5)).tz_localize("UTC")  # fixed EST -> UTC
+    local = pd.DatetimeIndex(pd.to_datetime(frame.stamp, format="%Y%m%d %H%M%S"))
+    # New York wall time; the hour that does not exist or repeats at a clock change falls on a
+    # Sunday night before the reopen, so it carries no bars worth guessing about.
+    index = local.tz_localize("America/New_York", ambiguous="NaT", nonexistent="NaT").tz_convert("UTC")
+    frame = frame[~index.isna()]
+    index = index[~index.isna()]
     out = pd.DataFrame({"open": frame.open.to_numpy(float), "high": frame.high.to_numpy(float),
                         "low": frame.low.to_numpy(float), "close": frame.close.to_numpy(float),
                         "tick_volume": 0, "spread": 0, "real_volume": 0}, index=index)
@@ -96,7 +102,7 @@ def main(argv: list[str] | None = None) -> int:
     (cache / "source.json").write_text(json.dumps({
         "server": SERVER, "symbol": symbol, "chart_mode": "bid", "point": 10 ** -max(decimals, 1),
         "contract_size": 1.0, "provider": "histdata.com free ASCII M1",
-        "clock": "EST without daylight saving (UTC-5), converted to UTC at download",
+        "clock": "New York wall time with daylight saving (checked against FTMO), converted to UTC",
         "spread": "not recorded; stored as 0", "years": summary}, indent=2) + "\n", encoding="utf-8")
     print(f"cache: {cache}")
     return 0
