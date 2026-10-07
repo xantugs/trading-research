@@ -81,3 +81,37 @@ setting changed.
 | After the fix | −0.12 bps/day, t −0.20, 1,710 days | **+1.79 bps/day, t 1.77, 1,696 days** |
 
 S1 stops at the development gate. S2 passes it and goes to the holdout.
+
+## Results (8 October 2026)
+
+**Holdout, run once (`holdout`).** Returns are at 1× notional, net of costs.
+
+| | S2 per day | t | Sharpe | Days / trades | Hit rate | Years positive |
+|---|---|---|---|---|---|---|
+| Development, 2010-11 to 2017 | +1.79 bps | 1.77 | 0.68 | 1,696 / 1,446 | | |
+| **Holdout A, HistData 2018–2024** | **+5.87 bps** | **3.84** | **1.65** | 1,365 / 1,170 | 0.453 | **7 of 7** |
+| Holdout B, FTMO 2025-01 to 2026-10 | +2.66 bps | 0.88 | 0.69 | 413 / 328 | 0.436 | 2 of 2 |
+
+Holdout A by year, in bps per day: 2018 +12.4, 2019 +0.1, 2020 +4.5, 2021 +2.7,
+2022 +12.2, 2023 +4.5, 2024 +3.1. Holdout B: 2025 +3.8, 2026 +1.3.
+
+S1 is reported for information only, since it stopped at the gate: A −1.67 bps/day
+(t −1.95), B −0.53.
+
+**Verdict: S2 passes** (rule 2: t 3.84 ≥ 2.3, and 7 of 7 years positive) and is confirmed
+by B (mean > 0). S1 has no edge here.
+
+**Stress diagnostics.** These are reported only and were not used for the verdict.
+
+| | Holdout A | Holdout B |
+|---|---|---|
+| Spread and slippage ×2 | +5.33 bps/day, t 3.48 | +2.19, t 0.72 |
+| Every checkpoint one minute late | +5.44 bps/day, t 3.64 | +1.95, t 0.67 |
+| Daily standard deviation | 56.5 bps | 61.7 bps |
+| Worst / best day | −292 / +386 bps | −139 / +860 bps |
+
+**What this does and does not show.** S2 earned about 15% a year unlevered over 2018–2024,
+on years the rules never saw. It survives doubled costs and late fills, and it agrees in
+sign on a second feed for 2025–26. Its settings came from the paper, not from this data.
+Holdout B alone is too short to be significant. The test is on a Nasdaq-100 CFD with
+modelled costs, so live fills still need a forward test before money is at risk.
