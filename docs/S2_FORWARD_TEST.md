@@ -98,3 +98,16 @@ fires often. That preset is close to a coin flip.
 hours (16:30 = 09:30 New York), which is what a server on GMT+2/+3 switching on US dates
 gives. If the server switches on EU dates, the session sits an hour off for a few weeks a
 year. Check that the US100/NAS100 chart's big opening move prints at 16:30 server time.
+
+**12-month plan for The5ers $2.5k (`python -m scripts.s2_lifecycle --size 2500 --fee-2step 19 ... --tag _5ers`).**
+The simulation includes retries, the 80% split and lost funded accounts.
+
+| Challenge → funded | Net $/month, development → holdout edge | First payout (months) | Below zero after 12 months | Zero edge |
+|---|---|---|---|---|
+| **8× → 2× (recommended)** | **+9 → +27** | 3.4–4.3 | 19–31% | −$10/month |
+| 4× → 2× | +7 → +26 | 4.5–6.1 | 18–40% | −$1/month |
+| 2× → 2× | +2 → +17 | 6.4–8.2 | 33–70% | −$1/month |
+
+So the challenge runs on `S2_5ers_highstakes_fast_8x` (only the $19 fee is at risk), and
+once funded the account switches to `S2_5ers_highstakes_steady_2x`. The 2× preset alone is
+right for checking fidelity, but too slow to pass the +15% two-phase target.
