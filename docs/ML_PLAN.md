@@ -348,3 +348,28 @@ t)`, which picks the bar labelled t, whose close is at t + 1 minute.
 follow-up 2 (including the logistic regression's t 3.07) are **invalid**. They used a
 one-minute peek at the DAX and gold. They stay recorded above, unedited, as a record of
 what was run. A clean rebuild and walk-forward follows, labelled `_clean`.
+
+### Clean rerun (9 October 2026, `ml_study build` + `ml_diagnostics --tag _clean`)
+
+All three fixes are in: XGBoost weights, half-day exits, and the cross-asset look-ahead.
+Pooled walk-forward, 2012 to 2026-10, out of sample, net of costs:
+
+| | Nasdaq-100 | S&P 500 |
+|---|---|---|
+| Blend (working XGBoost + supervised-autoencoder MLP) | +1.39 bps/day, t 0.95, 9 of 14 positive | +0.55, t 0.47, 8 of 14 |
+| Logistic regression | +1.22, t 0.82, 9 of 14 | +0.08, t 0.07, 7 of 14 |
+| **S2-signal rule (no model)** | **+3.17, t 4.03, 12 of 14** (FTMO 2025–26: +2.61) | **+1.52, t 2.48, 10 of 14** |
+
+- **Out-of-sample AUC** on the 30-minute label is 0.47–0.54 in every year (about 0.50 is a
+  coin flip). In-sample it is 0.53–0.61.
+- **XGBoost importance is flat** (about 4–5% per feature, led by daily returns and day of
+  the week). No feature dominates, which is the signature of noise.
+- **Six boosters made no split even with scaled weights.** The warning now reports this;
+  there was no signal to learn.
+
+**Verdict.** Without the look-ahead, neither machine-learning model has any edge on either
+market, and the logistic regression's earlier t of 3.07 came entirely from the one-minute
+peek. The only robust result is the plain intraday-momentum rule, S2's signal, with t 4.03
+on the Nasdaq-100 and 2.48 on the S&P 500 over 15 years. It confirms
+docs/INTRADAY_MOMENTUM_PLAN.md. The features here, built from public minute prices, add
+nothing to it.
