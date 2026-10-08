@@ -156,6 +156,37 @@ The data, the universe, the return compounding and the portfolio code reproduce 
 without any CNN, so any Gate-2 gap is in the images or the model. The full table is in
 `outputs/jkx/report.csv`.
 
+**Gate 2, I5/R5: passed (9 October 2026).**
+- **Training:** 3,495,270 images (1993–2000), five seeds trained side by side on an RTX 5090.
+  Early stopping came after 5 to 14 epochs. It took 25 minutes, plus 1 minute to predict
+  6,157,033 test images.
+- **Test sample:** 2001–2019, 990 weeks.
+
+| I5/R5 | Ours | Paper | Ratio | Gate |
+|---|---|---|---|---|
+| H-L Sharpe, equal weight | **6.95** | 7.15 | 0.97 | ≥ 0.7× and ≤ 1.3×: pass |
+| H-L Sharpe, value weight | **1.50** | 1.49 | 1.01 | ≥ 0.5×: pass |
+| H-L Sharpe, 500 largest, equal weight | 1.17 | 1.02 | 1.15 | reported |
+| H-L Sharpe, 500 largest, value weight | 1.30 | 1.29 | 1.01 | reported |
+| H-L annualised return, equal weight | 0.83 | 0.83 | | |
+| Decile monotonicity (Spearman, equal and value weight) | 1.00 / 1.00 | | | ≥ 0.9: pass |
+| Monthly turnover, equal weight | 744% | 690% | | |
+
+**Decile returns, annualised, equal weight:**
+- Ours: −0.28, −0.05, +0.02, +0.07, +0.10, +0.12, +0.17, +0.22, +0.30, +0.55.
+- Paper: −0.28, −0.04, +0.03, +0.08, +0.09, +0.14, +0.17, +0.22, +0.30, +0.54.
+
+**Test accuracy:** 51.6% overall. It ranged from 49.6% (2016) to 54.2% (2011), and was
+below 51% in 8 of the 9 years from 2009 to 2019, against 4 of the 10 years from 2001 to
+2010.
+
+### GPU hours used
+
+| Date | Job | GPU time | Cost |
+|---|---|---|---|
+| 9 Oct 2026 | I5/R5 (5 seeds + predictions) | 0.45 h | ¥1.25 |
+| 9 Oct 2026 | I20/R20 started, stopped after ~5 min when the RSNA training began | 0.08 h | ¥0.25 |
+
 ## Compute and storage
 
 | Step | Where | Size / time |
