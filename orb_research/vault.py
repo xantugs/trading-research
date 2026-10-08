@@ -94,9 +94,15 @@ def unseal(experiment: str, range_name: str, plan: Path, root: Path = ROOT,
 
 
 def record_run(experiment: str, config: dict, metrics: dict, ledger: Path = LEDGER, root: Path = ROOT) -> dict:
-    row = {"time": _now(), "experiment": experiment,
-           "commit": _git("rev-parse", "HEAD", root=root).stdout.strip(),
-           "dirty": bool(_git("status", "--porcelain", "--untracked-files=no", root=root).stdout.strip()),
+    head = _git("rev-parse", "HEAD", root=root)
+    if head.returncode == 0:
+        commit = head.stdout.strip()
+        dirty = bool(_git("status", "--porcelain", "--untracked-files=no", root=root).stdout.strip())
+    else:   # a `git archive` copy (e.g. the GPU server): the commit is recorded in COMMIT
+        stamp = root / "COMMIT"
+        commit = stamp.read_text().strip() if stamp.exists() else "unknown"
+        dirty = None
+    row = {"time": _now(), "experiment": experiment, "commit": commit, "dirty": dirty,
            "config": config, "metrics": metrics}
     _append(ledger, row)
     return row
