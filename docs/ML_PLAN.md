@@ -225,3 +225,27 @@ visible: the predictor is negative in the early years, when it has only 1–6 ye
 training data (2012: −12.6, t −2.85), and positive every year from 2019 to 2026. That could
 mean it needs more data, or that it suits recent markets, or it could be luck. These years
 cannot tell those apart, and choosing a start year now would be selection after the fact.
+
+## Follow-up 2: another market, and overfitting diagnostics (planned 9 October 2026, before running)
+
+**S&P 500.** The identical recipe and walk-forward is run with the S&P 500 as the traded
+market:
+- the Nasdaq-100 is the "other US index" input;
+- DAX and gold inputs are unchanged;
+- FTMO `US500.cash` covers 2025–26;
+- θ = 0 and nothing is re-tuned.
+
+The same reading applies: consistent if the pooled t is at least 2.0 and at least 60% of
+the periods are positive.
+
+**Diagnostics, for both markets, in the same walk-forward:**
+1. **Overfitting gap:** the AUC of the 30-minute label on each model's training rows,
+   against its out-of-sample year.
+2. **Baselines**, traded with the same θ = 0 rule:
+   - a logistic regression on the same standardised features (scikit-learn, C = 1.0,
+     sample-weighted, one model per label);
+   - a rule that sets the position to S2's signal at each checkpoint (no model).
+3. **Interpretation:** XGBoost gain importance of the final (2010–2024) model, averaged
+   over the three labels.
+
+These are reported, not used to choose anything.
