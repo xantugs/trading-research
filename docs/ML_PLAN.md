@@ -204,3 +204,24 @@ threshold is chosen.
 - at least **60%** of the 15 periods (2012–2024 and FTMO 2025–26) are positive.
 
 Otherwise the 2022–26 result is treated as luck. Nothing is tuned after this run.
+
+### Walk-forward results (9 October 2026, `python -m scripts.ml_walkforward`)
+
+Out-of-sample bps/day (t), win rate on days:
+
+| Year | 2012 | 2013 | 2014 | 2015 | 2016 | 2017 | 2018 | 2019 | 2020 | 2021 | 2022 | 2023 | 2024 | FTMO 2025–26 |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| bps/day | −12.61 | −1.02 | +1.57 | +0.43 | −0.91 | +2.94 | −2.56 | +4.69 | +5.85 | +3.50 | +9.79 | +10.18 | +2.13 | +2.49 |
+| t | −2.85 | −0.27 | 0.37 | 0.09 | −0.20 | 0.99 | −0.39 | 1.32 | 0.86 | 0.72 | 1.15 | 1.58 | 0.51 | 0.55 |
+| Win days | 35% | 49% | 50% | 53% | 45% | 53% | 53% | 52% | 53% | 50% | 48% | 50% | 51% | 53% |
+
+The plan counted 15 periods; 2012–2024 plus FTMO is 14.
+- **Pooled, 2012 to 2026-10:** +1.70 bps/day, t 1.22, Sharpe 0.32, 50% winning days.
+- **Positive periods:** 10 of 14 (71%).
+
+**Verdict: not consistent, so by the rule the 2022–26 result is treated as luck.** The
+pooled t of 1.22 is short of 2.0, although 71% of the periods are positive. One pattern is
+visible: the predictor is negative in the early years, when it has only 1–6 years of
+training data (2012: −12.6, t −2.85), and positive every year from 2019 to 2026. That could
+mean it needs more data, or that it suits recent markets, or it could be luck. These years
+cannot tell those apart, and choosing a start year now would be selection after the fact.
