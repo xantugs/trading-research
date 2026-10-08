@@ -12,16 +12,32 @@ XGB_PARAMS = {"tree_method": "hist", "max_depth": 5, "learning_rate": 0.03, "sub
               "eval_metric": "logloss", "n_jobs": 12}
 
 
+def _unit_mean(weights) -> np.ndarray:
+    weights = np.asarray(weights, dtype=np.float64)
+    return weights / weights.mean()
+
+
 def fit_xgb(x_train, y_train, w_train, x_valid, y_valid, w_valid, seed: int = 0):
-    """One booster per label column, early-stopped on validation log-loss."""
+    """One booster per label column, early-stopped on validation log-loss.
+
+    `min_child_weight` counts summed (hessian x sample) weight, so the weights are scaled
+    to mean 1 first: raw |return| weights (~0.003) made every leaf too light to split and
+    the boosters predicted a constant (docs/ML_PLAN.md, follow-up 2). A booster that still
+    makes no split is reported, never silently kept."""
+    import warnings
+
     import xgboost as xgb
 
+    w_train, w_valid = _unit_mean(w_train), _unit_mean(w_valid)
     models = []
     for j in range(y_train.shape[1]):
         dtrain = xgb.DMatrix(x_train, label=y_train[:, j], weight=w_train)
         dvalid = xgb.DMatrix(x_valid, label=y_valid[:, j], weight=w_valid)
         booster = xgb.train({**XGB_PARAMS, "seed": seed}, dtrain, num_boost_round=2000,
                             evals=[(dvalid, "valid")], early_stopping_rounds=100, verbose_eval=False)
+        if not booster.get_score():
+            warnings.warn(f"XGBoost label {j}: no split in any tree; it predicts a constant", RuntimeWarning,
+                          stacklevel=2)
         models.append(booster)
     return models
 

@@ -295,3 +295,18 @@ the candidate, and it is one of three models looked at. Its result (t 3.07 on bo
 markets, positive in 12–13 of 14 periods and on FTMO 2025–26 for both) is the strongest
 ML evidence so far. But choosing it now is a selection after the fact, so it needs a
 fresh test before any money: frozen as it is, run forward on the demo.
+
+## Fix and corrected rerun (planned 9 October 2026, before running)
+
+`fit_xgb` now scales the sample weights to mean 1 before training, and warns if any
+booster makes no split. `tests/test_ml_models.py` fails on the old behaviour: zero splits
+with weights of about 0.003.
+
+**Corrected rerun.** Follow-up 2 is run again unchanged (`--tag _fixed`), now with a working
+XGBoost half in the blend. It is labelled as a corrected rerun.
+- The plan's sealed test (2022–2024) and the first walk-forward are **not** re-run. Their
+  results stand as recorded, with the defect noted.
+- The corrected blend uses the same consistency reading: pooled t ≥ 2.0 and at least 60% of
+  periods positive.
+- None of these models is adopted from this run. Any model that goes forward is frozen and
+  tested on the demo.

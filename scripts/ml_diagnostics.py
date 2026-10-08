@@ -7,6 +7,7 @@ XGBoost feature importance.
 """
 from __future__ import annotations
 
+import argparse
 import json
 import pickle
 from pathlib import Path
@@ -107,8 +108,10 @@ def run_market(name: str, hist: dict, ftmo: dict) -> dict:
             "verdict": "consistent" if consistent else "luck (not consistent)"}
 
 
-def main() -> int:
-    target = OUT / "diagnostics.json"
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--tag", default="", help="suffix for the results file (a separate, labelled run)")
+    target = OUT / f"diagnostics{parser.parse_args(argv).tag}.json"
     if target.exists():
         raise SystemExit(f"already run: {target}")
     with open(OUT / "data_hist.pkl", "rb") as handle:
