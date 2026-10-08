@@ -188,3 +188,19 @@ pass:
 Both are compatible with a small real signal, and with luck. Any further use of it is a
 new hypothesis that needs fresh data, such as a demo forward test next to S2, and not a
 re-tuning on these years.
+
+## Follow-up: is Project A luck? A walk-forward check (planned 9 October 2026, before running)
+
+The same recipe is used, unchanged: features, labels, models, the 3-seed blend and θ = 0.
+It is retrained for each year Y from 2012 to 2024, on all HistData rows dated before Y,
+with the last 12 months of that window as the early-stopping set and a 5-day gap before
+Y. Each model then predicts and trades only year Y. A final model, trained on 2010–2024
+(early stopping on 2024), predicts FTMO 2025–26. Every year is thus traded by a model
+that never saw it, in training, early stopping or threshold choice. θ = 0 means no
+threshold is chosen.
+
+**Reading, fixed now.** A is called **consistent** (not luck) if both hold:
+- the pooled out-of-sample daily mean, over 2012 to 2026-10, has **t ≥ 2.0**;
+- at least **60%** of the 15 periods (2012–2024 and FTMO 2025–26) are positive.
+
+Otherwise the 2022–26 result is treated as luck. Nothing is tuned after this run.
