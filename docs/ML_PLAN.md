@@ -249,3 +249,49 @@ the periods are positive.
    over the three labels.
 
 These are reported, not used to choose anything.
+
+### Follow-up 2 results (9 October 2026, `python -m scripts.ml_diagnostics`)
+
+**Pooled walk-forward, 2012 to 2026-10, out of sample, net of costs:**
+
+| | Nasdaq-100 | S&P 500 |
+|---|---|---|
+| Blend (the plan's model) | +1.70 bps/day, t 1.22, 10 of 14 periods positive | +2.10, t 1.85, 10 of 14 |
+| **Logistic regression baseline** | **+4.46, t 3.07, 13 of 14** (FTMO 2025–26: +6.97) | **+3.50, t 3.07, 12 of 14** (FTMO: +5.56) |
+| S2-signal rule (no model) | +3.06, t 3.89, 12 of 14 | +1.35, t 2.21, 10 of 14 |
+
+**Verdict on the plan's model: not consistent on either market.** Per-year AUC on the
+30-minute label (training rows against the out-of-sample year) shows the blend overfits.
+It scores 0.52–0.61 on its training years and 0.48–0.55 out of sample (2012: 0.607 against
+0.480).
+
+**A defect found by the diagnostics.** The empty XGBoost importance led to it. The sample
+weights (|return|) average 0.0027, so `min_child_weight = 50` could never be met. **Every
+XGBoost model made zero splits and predicted a constant.** The "blend" in the sealed test,
+the walk-forward and this run was therefore half the MLP and half a constant. With the
+weights scaled to mean 1, XGBoost uses 25–28 features but early-stops after 0–37 rounds, a
+weak signal. The sealed-test and walk-forward results above stand as run, with this
+noted. They are not re-run with a corrected blend, because that would be a variant chosen
+after seeing results.
+
+**Interpretation, from the final logistic regression on the Nasdaq-100.** These are the
+standardised coefficients for the 30-minute label:
+
+| Feature | Coefficient | Reading |
+|---|---|---|
+| DAX's last 30 minutes | +0.123 | the DAX leads the US index |
+| S&P's last 30 minutes | −0.098 | relative value against the other index |
+| S&P's move since its open | −0.093 | relative value against the other index |
+| Own move since the open | +0.095 | intraday momentum, as in S2 |
+| Since the previous close | +0.045 | |
+| S2 signal | +0.031 | |
+
+The simple linear model generalises far better than the deep model, a common result on
+noisy financial data. Its features have plausible readings: momentum, cross-market
+lead-lag and relative value between the indices.
+
+**Status of the logistic regression.** It was declared beforehand as a diagnostic, not as
+the candidate, and it is one of three models looked at. Its result (t 3.07 on both
+markets, positive in 12–13 of 14 periods and on FTMO 2025–26 for both) is the strongest
+ML evidence so far. But choosing it now is a selection after the fact, so it needs a
+fresh test before any money: frozen as it is, run forward on the demo.
