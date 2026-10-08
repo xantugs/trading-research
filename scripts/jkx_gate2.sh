@@ -1,6 +1,6 @@
 #!/bin/bash
 # Gate 2 of docs/JKX_REPLICATION_PLAN.md on the shared GPU server (run from /root/autodl-tmp/trading):
-#   setsid nohup bash scripts/jkx_gate2.sh > logs/gate2.log 2>&1 &
+#   setsid nohup bash scripts/jkx_gate2.sh ["DAYS HORIZON" ...] > logs/gate2.log 2>&1 &
 # Each model's five seeds train side by side on one GPU (identical maths to training them one
 # after another), then the ensemble predicts the 2001-2019 test years. Images stay in system
 # RAM (--data-on-cpu) so the job needs only a few GB of GPU memory on the shared card.
@@ -16,7 +16,9 @@ gpu_busy() {   # another process holding more than 2 GB of GPU memory
   [ "$used" -gt 2000 ]
 }
 
-for model in "20 20" "5 5" "20 5"; do
+MODELS=("$@")
+[ ${#MODELS[@]} -eq 0 ] && MODELS=("20 20" "5 5" "20 5")      # or pass e.g. "5 5" "20 20"
+for model in "${MODELS[@]}"; do
   set -- $model
   days=$1; horizon=$2; name="I${days}R${horizon}"
   if [ -f "$DATA/predictions/$name.parquet" ]; then echo "$name: done already"; continue; fi
