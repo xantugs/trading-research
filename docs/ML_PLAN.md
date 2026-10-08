@@ -315,3 +315,36 @@ XGBoost half in the blend. It is labelled as a corrected rerun.
 `trade_direct` never closed an open position, so that day's P/L was dropped (about 3 days a
 year). It now closes at the session's last price. `tests/test_ml_intraday.py` covers it.
 The corrected rerun includes both fixes.
+
+## Follow-up 3: the "DAX leads the US" effect was a look-ahead bug (9 October 2026)
+
+The logistic regression's largest coefficient was on the DAX's last 30 minutes. The user
+asked whether it was real, so it was tested
+(the check is in `outputs/ml/`; the commands are recorded in the session):
+
+| Check | Result |
+|---|---|
+| 1-minute return correlation, HistData DAX against Nasdaq, 09:35–11:30 NY | lag 0: 0.669; lag ±1: ≤ 0.013. The feeds' clocks agree |
+| t of DAX's past 30 minutes predicting the Nasdaq's next 30 (with own and S&P r30 as controls), 2010–2024 | **+12.11**, but **+0.68** when DAX's last minute is skipped (+1.69, +2.83, +4.22 when skipping 2, 5 and 10 minutes) |
+| The same, with DAX's cash market open / closed | +4.04 / +12.82 |
+| FTMO 2025–26, the same feature | +9.55 |
+
+**Cause: a 1-minute look-ahead in the cross-asset features.** Minute bars are labelled by
+their start. The traded index and the other US index correctly use the bar that ends at
+the checkpoint (`col = checkpoint − 1`). But the DAX and gold features used `_asof(series,
+t)`, which picks the bar labelled t, whose close is at t + 1 minute.
+- **Affected:** every DAX and gold feature (`dax_dev`, `dax_r30`, `gold_dev`, `gold_r30`,
+  `gold_r60`), in the sealed test, the walk-forward and follow-up 2.
+- **Not affected:** S2, the basket and the other studies, which read prices through the
+  session grid only.
+- **Why the earlier test missed it:** `tests/test_ml_intraday.py` changed only the traded
+  market's future.
+- **Fix:** `_price_at`, the close of the bar ending at t (labelled t − 1 minute), is used for
+  every cross-asset lookup.
+- **New test:** `test_no_feature_reads_any_input_at_or_after_its_checkpoint` rewrites the
+  future of all four inputs. It fails on the old code and passes on the fix.
+
+**Consequence.** The sealed-test results for Projects A and B, the first walk-forward and
+follow-up 2 (including the logistic regression's t 3.07) are **invalid**. They used a
+one-minute peek at the DAX and gold. They stay recorded above, unedited, as a record of
+what was run. A clean rebuild and walk-forward follows, labelled `_clean`.

@@ -34,6 +34,17 @@ def _asof(series: pd.Series, times: np.ndarray, tolerance_min: int = 10) -> np.n
     return out
 
 
+MINUTE = 60_000_000_000
+
+
+def _price_at(series: pd.Series, times: np.ndarray, tolerance_min: int = 10) -> np.ndarray:
+    """The price known at each UTC time: the close of the minute bar that ENDS then. Bars are
+    labelled by their start, so that is the bar labelled one minute earlier. (Looking up the
+    bar labelled `times` itself reads a close one minute in the future: the look-ahead found
+    in docs/ML_PLAN.md, follow-up 3.)"""
+    return _asof(series, times - MINUTE, tolerance_min)
+
+
 def decision_frame(close: pd.DataFrame, first_open: pd.Series, other_close: pd.DataFrame,
                    other_open: pd.Series, dax: pd.Series, gold: pd.Series, market_flag: int) -> pd.DataFrame:
     """One row per (date, checkpoint) with features and forward labels.
@@ -86,14 +97,14 @@ def decision_frame(close: pd.DataFrame, first_open: pd.Series, other_close: pd.D
         o_price = o_grid[:, col]
         o_back30 = o_price / o_grid[:, col - 30] - 1 if col >= 30 else np.full(len(dates), np.nan)
         t = times_utc[k]
-        dax_now = _asof(dax, t)
-        dax_30 = _asof(dax, t - 30 * 60_000_000_000)
+        dax_now = _price_at(dax, t)
+        dax_30 = _price_at(dax, t - 30 * MINUTE)
         local_berlin = (date_index + pd.Timedelta(hours=9)).tz_localize("Europe/Berlin").tz_convert("UTC").asi8
-        dax_open = _asof(dax, local_berlin + 60_000_000_000, tolerance_min=15)
-        gold_now = _asof(gold, t)
-        gold_30 = _asof(gold, t - 30 * 60_000_000_000)
-        gold_60 = _asof(gold, t - 60 * 60_000_000_000)
-        gold_820 = _asof(gold, (date_index + pd.Timedelta(minutes=500)).tz_localize(NY).tz_convert("UTC").asi8,
+        dax_open = _price_at(dax, local_berlin + MINUTE, tolerance_min=15)      # the 09:00 bar's close
+        gold_now = _price_at(gold, t)
+        gold_30 = _price_at(gold, t - 30 * MINUTE)
+        gold_60 = _price_at(gold, t - 60 * MINUTE)
+        gold_820 = _price_at(gold, (date_index + pd.Timedelta(minutes=500)).tz_localize(NY).tz_convert("UTC").asi8,
                          tolerance_min=15)
         fwd30 = grid[:, min(col + 30, LAST)] / price - 1
         fwd60 = grid[:, min(col + 60, LAST)] / price - 1

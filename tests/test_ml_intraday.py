@@ -65,3 +65,29 @@ def test_direct_trades_close_at_the_last_price_of_a_half_day() -> None:
     daily = trade_direct(rows, np.array([0.9]), 0.0, close, spread, slip=0.0)
     assert daily.trades.iloc[0] == 1
     assert daily.ret.iloc[0] == pytest.approx(0.01)   # long at 100, closed at the 12:59 close of 101
+
+
+def test_no_feature_reads_any_input_at_or_after_its_checkpoint() -> None:
+    """Rewrite the future of every input (the traded index, the other index, DAX and gold)
+    from 11:00 New York on the last day: features at 10:00-11:00 must not move. The bar
+    labelled 11:00 closes at 11:01, so it is future too (the cross-asset look-ahead bug)."""
+    m1, other = _random_days(1), _random_days(2)
+    dax, gold = _utc_series(3), _utc_series(4)
+
+    def frame(m1_, other_, dax_, gold_):
+        close, _, first = session_grid(m1_, np.zeros(len(m1_)))
+        oclose, _, ofirst = session_grid(other_, np.zeros(len(other_)))
+        return decision_frame(close, first, oclose, ofirst, dax_, gold_, 0)
+
+    before = frame(m1, other, dax, gold)
+    last_day = m1.index.tz_convert("America/New_York").date[-1]
+    cut = pd.Timestamp(f"{last_day} 11:00", tz="America/New_York")
+
+    def shifted(data):
+        data = data.copy()
+        data.loc[data.index >= cut] = data.loc[data.index >= cut] * 1.05
+        return data
+
+    after = frame(shifted(m1), shifted(other), shifted(dax), shifted(gold))
+    pick = lambda f: f.loc[(f.date == last_day) & (f.check <= 2), list(FEATURES)].to_numpy()  # noqa: E731
+    np.testing.assert_allclose(pick(before), pick(after), equal_nan=True)
