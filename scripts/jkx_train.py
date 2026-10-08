@@ -45,29 +45,35 @@ def main() -> None:
     p.add_argument("--max-epochs", type=int, default=100)
     p.add_argument("--limit", type=int, default=0, help="debug: use only this many training images")
     p.add_argument("--data-on-cpu", action="store_true", help="keep images in RAM (for a GPU shared with other jobs)")
+    p.add_argument("--stage", choices=("all", "train", "predict"), default="all",
+                   help="train: fit --seed-list only (run several at once on one GPU); predict: ensemble saved seeds")
+    p.add_argument("--seed-list", default=None, help="e.g. 0,1 (default: all seeds)")
     a = p.parse_args()
 
     name = f"I{a.days}R{a.horizon}"
     folder = a.data / f"I{a.days}_{FREQ_OF_HORIZON[a.horizon]}"
     t0, t1 = map(int, a.train_years.split("-"))
     s0, s1 = map(int, a.test_years.split("-"))
-    meta, packed = load(folder, range(t0, t1 + 1))
-    label = meta[f"ret_{a.horizon}d"].to_numpy()
-    keep = np.isfinite(label)
-    meta, packed, y = meta[keep].reset_index(drop=True), packed[keep], (label[keep] > 0).astype(np.int64)
-    if a.limit:
-        meta, packed, y = meta.iloc[: a.limit], packed[: a.limit], y[: a.limit]
-    print(f"{name}: {len(y):,} training images {t0}-{t1}, {y.mean():.3f} up, device {a.device}, "
-          f"{n_params(ChartCNN(a.days)):,} parameters", flush=True)
-
-    (a.data / "models").mkdir(parents=True, exist_ok=True)
-    fits = []
-    for seed in range(a.seeds):
-        fit = train_one(packed, y, a.days, seed, a.device, max_epochs=a.max_epochs,
-                        data_on_gpu=not a.data_on_cpu, log=lambda s: print(s, flush=True))
-        torch.save(fit, a.data / "models" / f"{name}_seed{seed}.pt")
-        fits.append(fit)
-    del packed
+    models = a.data / "models"
+    seeds = [int(x) for x in a.seed_list.split(",")] if a.seed_list else list(range(a.seeds))
+    if a.stage in ("all", "train"):
+        meta, packed = load(folder, range(t0, t1 + 1))
+        label = meta[f"ret_{a.horizon}d"].to_numpy()
+        keep = np.isfinite(label)
+        meta, packed, y = meta[keep].reset_index(drop=True), packed[keep], (label[keep] > 0).astype(np.int64)
+        if a.limit:
+            meta, packed, y = meta.iloc[: a.limit], packed[: a.limit], y[: a.limit]
+        print(f"{name}: {len(y):,} training images {t0}-{t1}, {y.mean():.3f} up, device {a.device}, "
+              f"{n_params(ChartCNN(a.days)):,} parameters, seeds {seeds}", flush=True)
+        models.mkdir(parents=True, exist_ok=True)
+        for seed in seeds:
+            fit = train_one(packed, y, a.days, seed, a.device, max_epochs=a.max_epochs,
+                            data_on_gpu=not a.data_on_cpu, log=lambda s: print(s, flush=True))
+            torch.save(fit, models / f"{name}_seed{seed}.pt")
+        del packed
+    if a.stage == "train":
+        return
+    fits = [torch.load(models / f"{name}_seed{k}.pt", weights_only=False) for k in range(a.seeds)]
 
     test_meta, test_packed = load(folder, range(s0, s1 + 1))
     probs = np.stack([predict(f, test_packed, a.days, a.device) for f in fits], axis=1)
