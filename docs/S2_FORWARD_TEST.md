@@ -111,3 +111,13 @@ The simulation includes retries, the 80% split and lost funded accounts.
 So the challenge runs on `S2_5ers_highstakes_fast_8x` (only the $19 fee is at risk), and
 once funded the account switches to `S2_5ers_highstakes_steady_2x`. The 2× preset alone is
 right for checking fidelity, but too slow to pass the +15% two-phase target.
+
+## v1.11: early-close days
+
+On US early-close days (13:00 New York, 20:00 server) the EA would have waited for a
+22:59 server close that never comes, so an open position could stay overnight, or over the
+weekend after Black Friday. v1.11 does not trade on the dates in `InpEarlyCloseDates`.
+The Python engine already skipped those days, since they have no 16:00 close.
+
+The default list is 2026-11-27, 2026-12-24 and 2027-11-26. **Check the NYSE holiday
+calendar each year and add any new dates.** The 1.25% stop-loss stays as a backstop.

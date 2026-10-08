@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 import pandas as pd
 
 from orb_research.intraday_momentum import session_grid
@@ -47,3 +48,20 @@ def test_features_do_not_change_when_later_prices_change() -> None:
     np.testing.assert_allclose(a, b, equal_nan=True)
     # ... while the forward labels do see the change
     assert not np.allclose(before.loc[rows, "fwd_close"], after.loc[(after.date == last_day) & (after.check <= 2), "fwd_close"])
+
+
+def test_direct_trades_close_at_the_last_price_of_a_half_day() -> None:
+    from datetime import date
+
+    from orb_research.ml_intraday import trade_direct
+
+    day = date(2023, 11, 24)                          # the day after Thanksgiving closes at 13:00
+    prices = np.full(390, np.nan)
+    prices[:210] = 100.0                              # 09:30 ... 12:59
+    prices[100:210] = 101.0                           # up from 11:10
+    close = pd.DataFrame([prices], index=[day], columns=range(570, 960))
+    spread = pd.DataFrame([np.zeros(390)], index=[day], columns=range(570, 960))
+    rows = pd.DataFrame({"date": [day], "check": [0]})  # one decision at 10:00
+    daily = trade_direct(rows, np.array([0.9]), 0.0, close, spread, slip=0.0)
+    assert daily.trades.iloc[0] == 1
+    assert daily.ret.iloc[0] == pytest.approx(0.01)   # long at 100, closed at the 12:59 close of 101

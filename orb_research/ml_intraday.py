@@ -151,7 +151,11 @@ def trade_direct(frame: pd.DataFrame, prob_up: np.ndarray, theta: float, close: 
                 position = want
                 if position:
                     entry, s_entry, trades = price, s_now, trades + 1
-        if position and np.isfinite(row_close[LAST]):
-            total += _fill(position, entry, row_close[LAST], s_entry, row_spread[LAST], slip)
+        if position:
+            # flat at 16:00, or at the last price of a shortened session (half-days close at 13:00)
+            finite = np.flatnonzero(np.isfinite(row_close))
+            last = LAST if np.isfinite(row_close[LAST]) else int(finite[-1])
+            s_last = row_spread[last] if np.isfinite(row_spread[last]) else s_entry
+            total += _fill(position, entry, row_close[last], s_entry, s_last, slip)
         out.append({"date": day, "trades": trades, "ret": total})
     return pd.DataFrame(out).set_index("date")

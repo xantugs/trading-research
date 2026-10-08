@@ -310,3 +310,8 @@ XGBoost half in the blend. It is labelled as a corrected rerun.
   periods positive.
 - None of these models is adopted from this run. Any model that goes forward is frozen and
   tested on the demo.
+
+**A second defect, found during the audit for the rerun.** On half-days (a 13:00 close),
+`trade_direct` never closed an open position, so that day's P/L was dropped (about 3 days a
+year). It now closes at the session's last price. `tests/test_ml_intraday.py` covers it.
+The corrected rerun includes both fixes.

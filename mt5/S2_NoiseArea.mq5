@@ -3,6 +3,9 @@
 //|      Noise-area intraday momentum (Zarattini, Aziz & Barbon 2024) |
 //+------------------------------------------------------------------+
 //
+//  v1.11 - no trading on US early-close days (InpEarlyCloseDates): the cash session ends at
+//          13:00 New York, so a position would wait for a 16:00 close that never comes and
+//          could be held overnight or over a weekend; the backtest skips those days too.
 //  v1.10 - every order carries a visible stop-loss InpStopPct from the entry (The5ers requires
 //          one): 1.25% of price, beyond 99.5% of the 2010-2017 adverse moves, hit by 15 of
 //          1,171 trades in 2018-2024 (+5.63 against +5.87 bps a day without it).
@@ -34,12 +37,12 @@
 //
 //+------------------------------------------------------------------+
 #property copyright   "orb-backtest"
-#property version     "1.10"
+#property version     "1.11"
 #property description "Noise-area intraday momentum (S2). All times are BROKER SERVER time."
 
 #include <Trade/Trade.mqh>
 
-#define S2_VERSION "1.10"
+#define S2_VERSION "1.11"
 #define MAX_CHECKPOINTS 64
 
 input group "Session (broker server time; FTMO = New York + 7 h)"
@@ -61,6 +64,9 @@ input double InpDailyStopPct    = 2.5;    // Close all and stop for the day at t
 input double InpHardStopPct     = 8.5;    // Close all and halt at this % below the start (0 = off)
 input bool   InpTrailingHardStop = false; // Measure the hard stop from the highest day-start balance (1-Step)
 input bool   InpNewsFilter      = false;  // Skip orders within 2 min of high-impact US news (funded Standard)
+
+input group "Calendar"
+input string InpEarlyCloseDates = "2026.11.27,2026.12.24,2027.11.26"; // US 13:00-close days (yyyy.mm.dd, comma-separated; check NYSE yearly): no trading
 
 input group "Trade management"
 input ulong  InpMagic           = 20261008;
@@ -200,6 +206,20 @@ void OnTick()
   }
 
 //+------------------------------------------------------------------+
+bool EarlyCloseDay(const datetime day)
+  {
+   string dates[];
+   const int n = StringSplit(InpEarlyCloseDates, ',', dates);
+   for(int i = 0; i < n; i++)
+     {
+      StringTrimLeft(dates[i]);
+      StringTrimRight(dates[i]);
+      if(StringLen(dates[i]) > 0 && StringToTime(dates[i]) == day)
+         return(true);
+     }
+   return(false);
+  }
+
 void NewDay(const datetime day)
   {
    g_day = day;
@@ -214,6 +234,12 @@ void NewDay(const datetime day)
       GlobalVariableSet(g_peakKey, g_peakDayBalance);
      }
    g_status = "waiting for the session open";
+   if(EarlyCloseDay(day))
+     {
+      g_status = "US early-close day - not trading";
+      g_nextCheck = g_checkpoints;
+      g_ready = true;          // nothing left to prepare today
+     }
    UpdatePanel();
   }
 
