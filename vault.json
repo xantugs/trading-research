@@ -1,0 +1,11 @@
+{
+  "ranges": [
+    {
+      "name": "jkx_post_publication",
+      "start": "2020-01-01",
+      "end": "2099-12-31",
+      "datasets": ["crsp_daily"],
+      "note": "After the JKX test sample (2001-2019). Opened once, by the plan in docs/JKX_REPLICATION_PLAN.md, after the replication passes."
+    }
+  ]
+}
