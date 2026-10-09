@@ -127,6 +127,8 @@ def main() -> None:
         for label, frame in [("ALL non-stock (primary)" if name == "I5R5" else "ALL non-stock", test),
                              *[(g, test[test["group"] == g]) for g in sorted(test["group"].unique())],
                              ("stocks (control)", control)]:
+            if frame.empty:
+                continue
             for sig, col, c in [("CNN", "prob", centre), ("1-week reversal", "wstr", 0.0), ("12-month momentum", "mom", 0.0)]:
                 ic = describe(rank_ic(frame, col), freq)
                 ts = describe(sign_strategy(frame, col, c), freq)
