@@ -3,9 +3,9 @@ requires = ["setuptools>=75", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "orb-backtest"
+name = "trading-research"
 version = "2.0.0a1"
-description = "FTMO XAUUSD opening-range research with broker-data validation"
+description = "Pre-registered trading research: ORB, S2 intraday momentum, ML and chart-image CNNs"
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.11,<3.14"

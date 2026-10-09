@@ -1,9 +1,25 @@
+# Trading research
+
+Reproducible, pre-registered trading research: every study fixes its tests before
+looking at the data, keeps a sealed holdout, and reports failures in as much detail as
+successes. Formerly `orb-backtest`; the repository grew beyond opening-range breakouts.
+
+| Study | Status | Write-up |
+|---|---|---|
+| Opening Range Breakout (XAUUSD, US100) | Failed its pre-2021 holdout | sections below; `docs/PRE2021_HOLDOUT_PLAN.md` |
+| S2 noise-area intraday momentum (US100) | Passed its sealed holdout; MT5 EA on demo | `docs/INTRADAY_MOMENTUM_PLAN.md`, `docs/S2_FORWARD_TEST.md` |
+| ML on index intraday features (XGBoost + autoencoder MLP) | No edge after bug fixes | `docs/ML_PLAN.md` |
+| JKX chart-image CNN replication (CRSP, 1993–2025) | Replicated; passed the sealed 2020–2025 test | `docs/JKX_REPLICATION_PLAN.md` |
+| Pilot A: stock-trained CNN on FTMO instruments | Failed (no transfer) | `docs/JKX_TRANSFER_PILOT.md` |
+| Idea B: intraday chart CNNs (TAQ, S&P 500) | Data extraction under way | `docs/INTRADAY_CHARTS_PLAN.md` |
+
+There is **no claimed profitable strategy** in this repository.
+
 # Opening Range Breakout research
 
-A reproducible research project for a simple Opening Range Breakout strategy,
-initially on XAUUSD. The goal is to test whether an edge survives costs,
-chronological out-of-sample periods, and parameter changes. There is **no
-claimed profitable strategy** in this repository.
+The original project: a simple Opening Range Breakout strategy, initially on XAUUSD,
+tested for whether an edge survives costs, chronological out-of-sample periods, and
+parameter changes.
 
 ## Current status
 

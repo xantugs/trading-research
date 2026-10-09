@@ -32,7 +32,7 @@ from orb_research.data_loader import validate_m1_bars  # noqa: E402
 
 SITE = "https://www.histdata.com"
 SERVER = "HistData"
-AGENT = {"User-Agent": "Mozilla/5.0 (orb-backtest research; one request per year)"}
+AGENT = {"User-Agent": "Mozilla/5.0 (trading-research; one request per year)"}
 
 
 def fetch_year(opener, symbol: str, year: int) -> bytes:
