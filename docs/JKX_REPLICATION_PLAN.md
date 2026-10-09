@@ -180,12 +180,42 @@ without any CNN, so any Gate-2 gap is in the images or the model. The full table
 below 51% in 8 of the 9 years from 2009 to 2019, against 4 of the 10 years from 2001 to
 2010.
 
+**Gate 2, I20/R20: passed on the equal-weight test (9 October 2026).**
+- **Training:** 799,926 images (1993–2000), five seeds on an RTX 4090. Early stopping came
+  after 5 to 12 epochs, in 28 minutes.
+- **Test sample:** 1,404,998 test images over 226 months; test accuracy 53.1%.
+- **One fix during the run.** Two seeds first ran out of GPU memory during validation, and
+  were rerun after the validation batch dropped from 4,096 to 1,024 images (commit 2c33715).
+  This changes memory use only: the validation loss is the same mean.
+
+| I20/R20 | Ours | Paper | Gate |
+|---|---|---|---|
+| H-L Sharpe, equal weight | **2.08** | 2.16 | 0.96×: pass |
+| H-L annualised return, equal weight | 0.20 | 0.21 | |
+| Monthly turnover, equal weight | 174% | 173% | |
+| Decile monotonicity, equal weight (Spearman) | 0.99 | | ≥ 0.9: pass |
+| H-L Sharpe, value weight | 0.52 | not in the main tables | none set (n/a in the plan) |
+| Decile monotonicity, value weight | **0.55** | | see note |
+| H-L Sharpe, 500 largest (equal / value) | 0.15 / 0.35 | | reported |
+
+**Decile returns, annualised, equal weight:**
+- Ours: −0.03, +0.05, +0.07, +0.09, +0.10, +0.12, +0.12, +0.13, +0.14, +0.17.
+- Paper: −0.00, +0.05, +0.07, +0.09, +0.11, +0.11, +0.13, +0.14, +0.15, +0.18.
+
+**Note on the monotonicity gate.** It does not say which weighting it applies to. For
+I20/R20 the plan sets no value-weight target, because the paper's main tables report equal
+weight only. On equal weight the gate passes. The value-weight deciles are flat to noisy
+(+0.04 … +0.10, Spearman 0.55). That is recorded as a weakness, not explained away: at a
+monthly horizon, the image signal adds little among large stocks (500-largest Sharpe
+0.15–0.35).
+
 ### GPU hours used
 
 | Date | Job | GPU time | Cost |
 |---|---|---|---|
 | 9 Oct 2026 | I5/R5 (5 seeds + predictions) | 0.45 h | ¥1.25 |
 | 9 Oct 2026 | I20/R20 started, stopped after ~5 min when the RSNA training began | 0.08 h | ¥0.25 |
+| 9 Oct 2026 | I20/R20 on our own RTX 4090 (内蒙B 024, ¥1.98/h): 5 seeds + predictions, plus ~20 min of upload and setup | 0.85 h | ¥1.70 |
 
 ## Compute and storage
 
