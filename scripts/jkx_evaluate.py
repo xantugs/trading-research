@@ -37,6 +37,7 @@ def main() -> None:
     p.add_argument("--test-years", default="2001-2019")
     p.add_argument("--benchmarks-only", action="store_true")
     p.add_argument("--out", type=Path, default=Path("outputs/jkx"))
+    p.add_argument("--suffix", default="", help="evaluate predictions/I<d>R<h><suffix>.parquet only")
     a = p.parse_args()
     s0, s1 = map(int, a.test_years.split("-"))
     rows: list[dict] = []
@@ -50,8 +51,11 @@ def main() -> None:
         for name, col in BENCHMARKS.items():
             evaluate(meta, col, f"{name}/R{horizon}", freq, rows)
     if not a.benchmarks_only:
-        for path in sorted((a.data / "predictions").glob("I*R*.parquet")):
-            d, h = path.stem[1:].split("R")
+        for path in sorted((a.data / "predictions").glob(f"I*R*{a.suffix}.parquet")):
+            stem = path.stem[: len(path.stem) - len(a.suffix)] if a.suffix else path.stem
+            if not stem[1:].replace("R", "").isdigit():
+                continue                                    # a file with another suffix
+            d, h = stem[1:].split("R")
             pred = pd.read_parquet(path)
             pred = pred[(pred["date"].dt.year >= s0) & (pred["date"].dt.year <= s1)]
             evaluate(pred, "prob", f"I{d}/R{h}", FREQ_OF_HORIZON[int(h)], rows)

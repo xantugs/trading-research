@@ -121,6 +121,13 @@ def load_daily(start, end, experiment: str | None = None, crsp_dir: Path = DEFAU
 
 
 def load_delist(end, experiment: str | None = None, crsp_dir: Path = DEFAULT_DIR) -> pd.DataFrame:
-    """Delistings up to `end` (later rows are dropped so they cannot leak sealed information)."""
+    """Delistings up to `end` (later rows are dropped so they cannot leak sealed information).
+    The legacy table ends with 2024; later delistings come from the new-format table (crsp.stkdelists),
+    used only after the 2019 parity check has passed (orb_research.crsp_v2)."""
     f = pd.read_parquet(Path(crsp_dir) / "dsedelist.parquet")
+    legacy_end = pd.Timestamp("2024-12-31")
+    if pd.Timestamp(end) > legacy_end and (Path(crsp_dir) / "v2" / "PARITY_PASSED").exists():
+        from .crsp_v2 import delist_to_legacy
+        new = delist_to_legacy(pd.read_parquet(Path(crsp_dir) / "v2" / "stkdelists.parquet"))
+        f = pd.concat([f, new[new["dlstdt"] > legacy_end]], ignore_index=True)
     return f[f["dlstdt"] <= pd.Timestamp(end)]

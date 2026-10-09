@@ -32,7 +32,11 @@ def main() -> None:
     if not mt5.initialize(timeout=300_000):
         raise SystemExit(f"MT5 initialize failed: {mt5.last_error()}")
     manifest_path = a.out / "manifest.json"
-    old = json.loads(manifest_path.read_text())["symbols"] if manifest_path.exists() else {}
+
+    def save() -> None:   # atomic: an interrupted run must not leave an empty manifest
+        tmp = manifest_path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(manifest, indent=1))
+        tmp.replace(manifest_path)
     manifest = {"server": mt5.account_info().server, "start": a.start, "end_exclusive": a.end,
                 "downloaded": datetime.now(timezone.utc).isoformat(timespec="seconds"), "symbols": {}}
     try:
@@ -41,8 +45,11 @@ def main() -> None:
             group = s.path.split("\\")[0]
             if group not in GROUPS:
                 continue
-            if s.name in old and (a.out / f"{s.name}.parquet").exists():
-                manifest["symbols"][s.name] = old[s.name]
+            cached = a.out / f"{s.name}.parquet"
+            if cached.exists():                    # resume: rebuild the entry from the file itself
+                f = pd.read_parquet(cached)
+                manifest["symbols"][s.name] = {"group": group, "bars": len(f), "first": str(f["date"].iloc[0].date()),
+                                               "last": str(f["date"].iloc[-1].date())}
                 continue
             mt5.symbol_select(s.name, True)
             rates = mt5.copy_rates_from_pos(s.name, mt5.TIMEFRAME_D1, 0, a.bars)
@@ -55,15 +62,17 @@ def main() -> None:
             if f.empty:
                 continue
             f = f[["date", "open", "high", "low", "close", "tick_volume", "spread"]]
-            f.to_parquet(a.out / f"{s.name}.parquet", index=False)
+            tmp = a.out / f"{s.name}.parquet.tmp"
+            f.to_parquet(tmp, index=False)
+            tmp.replace(a.out / f"{s.name}.parquet")      # atomic: no half-written files
             manifest["symbols"][s.name] = {"group": group, "bars": len(f), "first": str(f["date"].iloc[0].date()),
                                            "last": str(f["date"].iloc[-1].date())}
             print(f"{s.name:12s} {group:16s} {len(f):5d} bars {f['date'].iloc[0].date()} .. {f['date'].iloc[-1].date()}",
                   flush=True)
-            manifest_path.write_text(json.dumps(manifest, indent=1))
+            save()
     finally:
         mt5.shutdown()
-        manifest_path.write_text(json.dumps(manifest, indent=1))
+        save()
 
 
 if __name__ == "__main__":

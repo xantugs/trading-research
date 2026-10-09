@@ -48,6 +48,7 @@ def main() -> None:
     p.add_argument("--stage", choices=("all", "train", "predict"), default="all",
                    help="train: fit --seed-list only (run several at once on one GPU); predict: ensemble saved seeds")
     p.add_argument("--seed-list", default=None, help="e.g. 0,1 (default: all seeds)")
+    p.add_argument("--pred-suffix", default="", help="e.g. _post: predictions/I<d>R<h>_post.parquet (keeps 2001-2019 files)")
     a = p.parse_args()
 
     name = f"I{a.days}R{a.horizon}"
@@ -82,10 +83,10 @@ def main() -> None:
     for k in range(probs.shape[1]):
         out[f"prob_seed{k}"] = probs[:, k]
     (a.data / "predictions").mkdir(parents=True, exist_ok=True)
-    out.to_parquet(a.data / "predictions" / f"{name}.parquet", index=False)
+    out.to_parquet(a.data / "predictions" / f"{name}{a.pred_suffix}.parquet", index=False)
     acc = ((out["prob"] > 0.5) == (out[f"ret_{a.horizon}d"] > 0))[out[f"ret_{a.horizon}d"].notna()].mean()
     print(f"{name}: test accuracy {acc:.4f} on {len(out):,} images", flush=True)
-    record_run(f"jkx/{name}", {"days": a.days, "horizon": a.horizon, "train": a.train_years, "test": a.test_years,
+    record_run(f"jkx/{name}{a.pred_suffix}", {"days": a.days, "horizon": a.horizon, "train": a.train_years, "test": a.test_years,
                                "seeds": a.seeds, "limit": a.limit},
                {"test_accuracy": float(acc), "epochs": [f["epochs"] for f in fits],
                 "best_valid_loss": [f["best_valid_loss"] for f in fits]})
