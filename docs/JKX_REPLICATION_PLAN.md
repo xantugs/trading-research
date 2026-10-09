@@ -231,6 +231,24 @@ Our Sharpe ratio is 14% above the paper's, inside the pre-set band. The decile p
 matches, with most of the gap coming from a slightly lower decile 1, so it does not look like
 a leak.
 
+**The rest of Table II (reported, not gated; 9 October 2026).** Equal weight, 2001–2019, on
+the RTX 4090:
+
+| Model | Ours H-L Sharpe | Paper | Ratio | Ours annualised return / paper | Turnover, ours / paper | Test accuracy |
+|---|---|---|---|---|---|---|
+| I5/R20 | 2.58 | 2.35 | 1.10 | 0.23 / 0.22 | 176% / 175% | 51.8% |
+| I5/R60 | 1.22 | 1.30 | 0.94 | 0.09 / 0.09 | 61% / 59% | 51.0% |
+| I20/R60 | 0.59 | 0.37 | 1.60 | 0.08 / 0.05 | 60% / 59% | 53.2% |
+
+- **I20/R60 is the only large gap.** The paper's figure is itself insignificant (no star), and
+  the sample has only 74 quarters: the standard error of an annualised Sharpe over 18.5 years
+  is about 0.23, so 0.59 against 0.37 is within one standard error.
+- **Value weight and the 500 largest stocks are weak at the longer horizons:**
+  - I5/R60: Sharpe 0.18 and 0.14 for the 500 largest (equal / value weight);
+  - I20/R60: Sharpe 0.34 and 0.33.
+
+  This repeats the I20/R20 pattern: the long-horizon signal sits in smaller stocks.
+
 ### GPU hours used
 
 | Date | Job | GPU time | Cost |
@@ -239,6 +257,7 @@ a leak.
 | 9 Oct 2026 | I20/R20 started, stopped after ~5 min when the RSNA training began | 0.08 h | ¥0.25 |
 | 9 Oct 2026 | I20/R20 on our own RTX 4090 (内蒙B 024, ¥1.98/h): 5 seeds + predictions, plus ~20 min of upload and setup | 0.85 h | ¥1.70 |
 | 9 Oct 2026 | I20/R5 on the RTX 4090: 5 seeds (2 h 03 min) + predictions (10 min) | 2.25 h | ¥4.45 |
+| 9 Oct 2026 | I5/R20, I5/R60 and I20/R60 on the RTX 4090 (16:25–16:45) | 0.35 h | ¥0.70 |
 
 ## Compute and storage
 
