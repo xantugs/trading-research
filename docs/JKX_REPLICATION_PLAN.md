@@ -209,6 +209,28 @@ weight only. On equal weight the gate passes. The value-weight deciles are flat 
 monthly horizon, the image signal adds little among large stocks (500-largest Sharpe
 0.15–0.35).
 
+**Gate 2, I20/R5: passed (9 October 2026). Gate 2 is passed for all three primary models.**
+- **Training:** 3,472,263 images (1993–2000), five seeds on the RTX 4090. Early stopping came
+  after 6 to 13 epochs, in 2 h 03 min.
+- **Test sample:** 6,133,982 test images over 990 weeks; test accuracy 52.3%.
+
+| I20/R5 | Ours | Paper | Ratio | Gate |
+|---|---|---|---|---|
+| H-L Sharpe, equal weight | **7.72** | 6.75 | 1.14 | within 0.7–1.3×: pass |
+| H-L Sharpe, value weight | **1.85** | 1.74 | 1.06 | ≥ 0.5×: pass |
+| H-L Sharpe, 500 largest (equal / value) | 1.01 / 1.12 | 0.78 / 0.96 | 1.29 / 1.16 | reported |
+| H-L annualised return, equal weight | 0.88 | 0.84 | | |
+| Decile monotonicity (equal / value) | 1.00 / 1.00 | | | ≥ 0.9: pass |
+| Monthly turnover, equal weight | 717% | 667% | | |
+
+**Decile returns, annualised, equal weight:**
+- Ours: −0.36, −0.05, +0.04, +0.09, +0.12, +0.14, +0.19, +0.23, +0.28, +0.52.
+- Paper: −0.32, −0.04, +0.04, +0.08, +0.12, +0.15, +0.19, +0.23, +0.27, +0.52.
+
+Our Sharpe ratio is 14% above the paper's, inside the pre-set band. The decile profile
+matches, with most of the gap coming from a slightly lower decile 1, so it does not look like
+a leak.
+
 ### GPU hours used
 
 | Date | Job | GPU time | Cost |
@@ -216,6 +238,7 @@ monthly horizon, the image signal adds little among large stocks (500-largest Sh
 | 9 Oct 2026 | I5/R5 (5 seeds + predictions) | 0.45 h | ¥1.25 |
 | 9 Oct 2026 | I20/R20 started, stopped after ~5 min when the RSNA training began | 0.08 h | ¥0.25 |
 | 9 Oct 2026 | I20/R20 on our own RTX 4090 (内蒙B 024, ¥1.98/h): 5 seeds + predictions, plus ~20 min of upload and setup | 0.85 h | ¥1.70 |
+| 9 Oct 2026 | I20/R5 on the RTX 4090: 5 seeds (2 h 03 min) + predictions (10 min) | 2.25 h | ¥4.45 |
 
 ## Compute and storage
 
