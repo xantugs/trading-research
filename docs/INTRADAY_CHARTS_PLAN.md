@@ -22,7 +22,24 @@ away:
 
 A CNN may find shapes that the hand-made rules miss.
 
-## Data (pending the feasibility probe, `scripts/taq_probe.py`)
+## Feasibility (measured 9 October 2026 on WRDS Cloud)
+
+- **TAQ access.** This subscription reads TAQ millisecond trades for **2012-01-03 to
+  2024-12-31** only. 2003–2011 and 2025–2026 return "permission denied".
+- **Speed.** Server-side 5-minute bars for ~500 stocks take **25–60 s per day**. The
+  extraction runs as 156 monthly SGE jobs, 4 at a time (`scripts/wrds_cloud/`): about 8–12
+  hours, submitted as job 40400561.
+- **Universe.** `crsp.dsp500list` gives point-in-time membership (505 names on 2019-03-01).
+  `wrdsapps_link_crsp_taqm.taqmclink` misses about 15% of members, mostly
+  foreign-incorporated (ETN, LYB, SLB…). Those fall back to the CRSP ticker that day.
+- **Test day 2019-03-01.**
+  - 501 of 505 members got bars, 78 bars each (09:30–15:55).
+  - **The last 5-minute close is within 0.5% of the CRSP close for 501/501**, including the
+    70 ticker-matched names.
+- **A bug caught by the test.** The Postgres `::int` cast rounds, which shifted trades into
+  the next bar and created a phantom bar 78. Bucketing now uses `floor()`.
+
+## Data
 
 - **Source:** WRDS TAQ millisecond trades, aggregated on WRDS's side into 5-minute bars
   (open, high, low, close, volume, trade count) for 09:30â€“16:00 New York.
