@@ -71,3 +71,19 @@ Our prior is therefore weak: a failure is the more likely outcome, and an inform
 - **If it fails,** pilot A closes as a negative transfer result, consistent with Hao (2025).
   There is no rescue search: no retraining on these instruments, no subset selection, no
   other horizons or thresholds.
+
+## Amendment (9 October 2026, before any pilot result was computed)
+
+The MT5 download was stopped after 92 symbols because the terminal's minute-history cache was
+filling the disk. These are the pilot's instruments; no result had been computed or looked at.
+
+**Test universe: 92 of the ~106 pre-registered symbols.**
+- **Complete groups:** Forex (28), Exotics (15), all cash indices including DXY and both oils
+  (16), Metals (9), Agriculture (7), Commodities (2).
+- **Crypto:** 15 of 30. Missing: 15 small Crypto II coins (AAV, ALG, BAR, GAL, GRT, ICP, IMX,
+  LNK, MAN, NER, SAN, UNI, VEC, XLM, XTZ).
+
+**Stock-CFD control group: not downloaded, so it is omitted from this run.** It may be added
+later as a separate, labelled run.
+
+Everything else (models, window, statistics, the pass rule) is unchanged.
