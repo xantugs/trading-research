@@ -87,3 +87,32 @@ filling the disk. These are the pilot's instruments; no result had been computed
 later as a separate, labelled run.
 
 Everything else (models, window, statistics, the pass rule) is unchanged.
+
+## Result (9 October 2026): failed, so pilot A is closed
+
+**Primary test (I5/R5, all 92 non-stock instruments, weekly, 2010–2025):**
+- 1,178 weeks; mean rank IC **0.015**, NW t **1.66**. That is below the pre-registered
+  t ≥ 2.0, so **transfer is not supported**.
+- The sign strategy reached Sharpe 0.18 (t 1.04).
+- The CNN did no better than the two simple baselines on the same sample:
+  - 1-week reversal: IC 0.009, t 0.82;
+  - 12-month momentum: IC 0.018, t 1.67.
+
+**Secondary results (reported, not gated):**
+- I20/R5 weekly: IC 0.016, t 1.89.
+- I20/R20 monthly: IC 0.024, t 1.26.
+
+Full tables are in `outputs/jkx/transfer_pilot.md`.
+
+**Subgroups.** About 15 group-by-model tests were run. Two reach t > 2 for the CNN:
+- FX with I5/R5: IC 0.030, t 2.58;
+- crypto with I20/R20: IC 0.121, t 3.51, over only 60 months.
+
+With ~15 tests, about one t > 2 is expected by chance. Selecting a subgroup after the fact
+is the rescue search this plan rules out. They are recorded as hypotheses only. Any test of
+them is a new, separately pre-registered study on data not used here: at minimum the sealed
+2026 bars, with FTMO costs.
+
+**Conclusion.** Consistent with Hao (2025): patterns a CNN learned on US stock charts do not
+transfer, in a tradeable way, to FX, indices, metals, energy or crypto at daily-to-monthly
+horizons. Pilot A is closed. Its cost was CPU time only.
