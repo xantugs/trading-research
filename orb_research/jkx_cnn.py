@@ -121,7 +121,7 @@ def train_one(packed: np.ndarray, labels: np.ndarray, days: int, seed: int, devi
         model.eval()
         vloss, correct = 0.0, 0
         with torch.no_grad():
-            for idx in _batches(len(va), 4096, None):
+            for idx in _batches(len(va), 1024, None):   # memory only: the mean loss is the same
                 xb, yb = batch_of(va_t[torch.from_numpy(idx).to(store)])
                 logits = model(unpack_batch(xb, days, mean, std))
                 vloss += loss_fn(logits, yb).item() * len(yb)
