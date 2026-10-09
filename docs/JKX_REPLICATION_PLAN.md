@@ -281,6 +281,37 @@ any sealed data was used.
 - Under it, parity **passes**, and 2025 joins the Gate 3 sample.
 - A stricter reading would end the Gate 3 sample at 2024.
 
+## Gate 3: PASSED (9 October 2026), post-publication 2020–2025
+
+**How it was run.**
+- **Unsealing:** the range was unsealed once for experiment `jkx_gate3` (plan commit 0e1c2de,
+  code 8dba790; `outputs/vault_log.jsonl`).
+- **Data:** 2020–2024 come from the legacy CRSP file; 2025 comes from the new format, after
+  the 2019 parity check passed.
+- **Models:** the frozen 1993–2000 models, with no retraining, scored 312 weeks (70 months)
+  in one run (`scripts/jkx_gate3.sh`, log in `outputs/jkx/gate3/`).
+
+**Pre-registered test.** I20/R5 equal-weight H-L **t (NW) = 10.11** (needs ≥ 2.0). The
+500-largest equal-weight H-L **Sharpe = 0.66** (needs > 0). **Result: PASS.**
+
+| 2020–2025 | Equal weight | Paper 2001–19 | Share kept | Value weight | 500 largest (equal / value) | Test accuracy |
+|---|---|---|---|---|---|---|
+| I20/R5 (gated) | **4.30** | 6.75 | 64% | 1.30 | 0.66 / 0.32 | 51.8% |
+| I5/R5 | 3.67 | 7.15 | 51% | 0.81 | 0.52 / 0.43 | 51.0% |
+| I20/R20 | 1.99 | 2.16 | 92% | 0.81 | 0.80 / 0.09 | 52.5% |
+| WSTR/R5 (benchmark) | 1.21 | 2.84 | 43% | 0.19 | 0.49 / 0.43 | |
+| STR/R5 (benchmark) | 0.57 | 1.76 | 33% | 0.03 | 0.25 / 0.16 | |
+
+**Reading.**
+- **Decay.** The chart signal survives publication, but weaker: the weekly models keep about
+  half to two thirds of their published Sharpe ratio. That is within the 32–58% decay
+  McLean & Pontiff report for published anomalies.
+- **Against the benchmarks.** The plain reversal benchmarks decayed more (they keep 33–43%),
+  so the CNN still carries information beyond short-term reversal.
+- **Gross figures.** Equal-weight turnover is about 700% a month, so the weekly figures are
+  gross. Large stocks, especially value-weighted, keep only Sharpe 0.3–0.4: most of the edge
+  still lives in small, costly-to-trade stocks.
+
 ### GPU hours used
 
 | Date | Job | GPU time | Cost |
@@ -290,6 +321,9 @@ any sealed data was used.
 | 9 Oct 2026 | I20/R20 on our own RTX 4090 (内蒙B 024, ¥1.98/h): 5 seeds + predictions, plus ~20 min of upload and setup | 0.85 h | ¥1.70 |
 | 9 Oct 2026 | I20/R5 on the RTX 4090: 5 seeds (2 h 03 min) + predictions (10 min) | 2.25 h | ¥4.45 |
 | 9 Oct 2026 | I5/R20, I5/R60 and I20/R60 on the RTX 4090 (16:25–16:45) | 0.35 h | ¥0.70 |
+| 9 Oct 2026 | RTX 4090 left idle 16:45–22:30 waiting for WRDS (avoidable) | 5.75 h | ¥11.40 |
+| 9 Oct 2026 | Gate 3 scoring on the RTX 4090; instance shut down afterwards (22:40) | 0.2 h | ¥0.40 |
+| | **Total so far** | | **≈ ¥20** |
 
 ## Compute and storage
 
