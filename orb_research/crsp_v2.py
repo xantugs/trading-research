@@ -49,9 +49,14 @@ def to_legacy(daily: pd.DataFrame, info: pd.DataFrame, active_only: bool = True)
     if active_only:
         exch = exch.where(m["tradingstatusflg"] == "A")
     prc = m["dlyprc"]
+    # Legacy convention: on no-trade days (bid/ask midpoint price) ASKHI/BIDLO hold the closing ask
+    # and bid. The new format leaves DlyHigh/DlyLow empty there and keeps DlyAsk/DlyBid instead
+    # (2019 parity check: all 49,199 mismatches were such days).
+    high = m["dlyhigh"].fillna(m["dlyask"]) if "dlyask" in m else m["dlyhigh"]
+    low = m["dlylow"].fillna(m["dlybid"]) if "dlybid" in m else m["dlylow"]
     return pd.DataFrame({
         "permno": m["permno"].astype("int32"), "date": pd.to_datetime(m["dlycaldt"]),
-        "prc": prc, "openprc": m["dlyopen"], "askhi": m["dlyhigh"], "bidlo": m["dlylow"],
+        "prc": prc, "openprc": m["dlyopen"], "askhi": high, "bidlo": low,
         "vol": m["dlyvol"], "ret": m["dlyret"], "shrout": m["dlycap"] / prc.abs(),
         "cfacpr": np.nan, "cfacshr": _share_factor(m).to_numpy(),
         "exchcd": exch.astype("Int16"), "shrcd": pd.Series(pd.NA, index=m.index, dtype="Int16"),

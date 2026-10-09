@@ -5,7 +5,7 @@ orb_research.crsp_v2, reproduce the legacy file on the open year 2019?
 
 Pass: every compared field agrees on >= 99.9% of stock-days present in both, and the 2019
 weekly WSTR/R5 and STR/R5 benchmark H-L Sharpe ratios (equal and value weight) agree to two
-decimals. (12-month momentum needs 2018 in the new format and is not compared.)
+decimals, i.e. every unrounded difference is below 0.005. (12-month momentum needs 2018 in the new format and is not compared.)
 """
 from __future__ import annotations
 
@@ -35,7 +35,7 @@ def benchmarks(daily: pd.DataFrame, delist: pd.DataFrame) -> dict:
     for sig in ("wstr", "str"):
         for w in (None, "mcap"):
             hl = decile_returns(s.meta, sig, weight=w)["H-L"]
-            out[f"{sig}|{'vw' if w else 'ew'}"] = round(summarize(hl, "week")["sharpe"], 2)
+            out[f"{sig}|{'vw' if w else 'ew'}"] = float(summarize(hl, "week")["sharpe"])
     return out
 
 
@@ -64,8 +64,17 @@ def main() -> None:
     b_v2 = benchmarks(crsp_v2.load_year(2019, active_only=True), v2_delist)
     print("\n2019 benchmark H-L Sharpe, legacy:", b_legacy)
     print("2019 benchmark H-L Sharpe, new   :", b_v2)
-    ok = primary_ok and b_legacy == b_v2
+    # "match to two decimals" = every unrounded difference below 0.005 (rounding first can split
+    # 1.1054 and 1.1050 into 1.11 and 1.10; see docs/JKX_REPLICATION_PLAN.md, parity note)
+    diffs = {k: abs(b_legacy[k] - b_v2[k]) for k in b_legacy}
+    print("benchmark |difference|:", {k: round(v, 4) for k, v in diffs.items()})
+    ok = primary_ok and max(diffs.values()) < 0.005
     print("\nPARITY", "PASSED" if ok else "FAILED")
+    marker = crsp.DEFAULT_DIR / "v2" / "PARITY_PASSED"
+    if ok:
+        marker.write_text("2019 parity passed; see scripts/jkx_parity_v2.py\n")
+    elif marker.exists():
+        marker.unlink()
 
 
 if __name__ == "__main__":

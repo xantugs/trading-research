@@ -249,6 +249,38 @@ the RTX 4090:
 
   This repeats the I20/R20 pattern: the long-horizon signal sits in smaller stocks.
 
+**Gate 3 parity check: passed after two corrections (9 October 2026; open year 2019, no sealed
+data involved).** Source: `crsp.stkdlysecuritydata` and `stksecurityinfohist`, mapped by
+`orb_research/crsp_v2.py`. The `dsf_v2` view was too slow to download.
+
+1. **First run: failed on high/low (98.04% agreement).**
+   - All 49,199 mismatches were no-trade days (price flag "BA").
+   - The legacy file stores the closing ask and bid in ASKHI/BIDLO on those days. The new file
+     leaves DlyHigh/DlyLow empty and keeps DlyAsk/DlyBid (agreement 100%).
+   - The mapping now uses ask/bid when high/low are empty. This is a mapping fix, not a data
+     choice.
+2. **Second run: all fields matched.**
+   - Price, open, high, low, return and volume match at 100%; shares outstanding at 99.985%,
+     the gaps being days with no price.
+   - Universe: 99.998% (0 legacy stock-days missing, 22 extra).
+   - **Benchmark H-L Sharpe ratios, unrounded (legacy / new):**
+
+     | Benchmark | Legacy | New | Difference |
+     |---|---|---|---|
+     | WSTR, equal weight | 1.4599 | 1.4582 | 0.0016 |
+     | WSTR, value weight | 0.5736 | 0.5726 | 0.0010 |
+     | STR, equal weight | 0.0260 | 0.0265 | 0.0005 |
+     | STR, value weight | 1.1054 | 1.1050 | 0.0004 |
+
+   - The code first rounded and then compared, which split STR value weight into 1.11 and
+     1.10.
+
+**Judgment recorded openly.** "Match to two decimals" is read as every unrounded difference
+being below 0.005. This interpretation was made after seeing the 2019 numbers, but before
+any sealed data was used.
+- Under it, parity **passes**, and 2025 joins the Gate 3 sample.
+- A stricter reading would end the Gate 3 sample at 2024.
+
 ### GPU hours used
 
 | Date | Job | GPU time | Cost |
