@@ -39,6 +39,7 @@ def main() -> None:
     p.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     p.add_argument("--max-epochs", type=int, default=100)
     p.add_argument("--data-on-cpu", action="store_true")
+    p.add_argument("--predict-batch", type=int, default=4096, help="images per forward pass at predict time (64 x 396 needs <= 1024 on 24 GB)")
     a = p.parse_args()
 
     n_t = DECISIONS[a.key]
@@ -66,7 +67,7 @@ def main() -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
     for part, years in (("dev", range(2012, 2018)), ("test", range(2018, 2021))):
         meta, packed = load(folder, years)
-        probs = np.stack([predict(f, packed, 20, a.device) for f in fits], axis=1)
+        probs = np.stack([predict(f, packed, 20, a.device, batch=a.predict_batch) for f in fits], axis=1)
         meta = meta.assign(prob=probs.mean(axis=1))
         for k in range(probs.shape[1]):
             meta[f"prob_seed{k}"] = probs[:, k]
