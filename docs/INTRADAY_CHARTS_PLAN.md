@@ -1,4 +1,4 @@
-# Idea B: intraday chart CNNs on US stocks (DRAFT, 9 October 2026, not yet pre-registered)
+# Idea B: intraday chart CNNs on US stocks (PRE-REGISTERED 10 October 2026)
 
 **Question.** JKX (replicated, Gates 1–3 passed: docs/JKX_REPLICATION_PLAN.md) show that a CNN
 reading *daily* chart images predicts the cross-section of next-week returns, and that the
@@ -25,76 +25,117 @@ A CNN may find shapes that the hand-made rules miss.
 ## Feasibility (measured 9 October 2026 on WRDS Cloud)
 
 - **TAQ access.** This subscription reads TAQ millisecond trades for **2012-01-03 to
-  2024-12-31** only. 2003�2011 and 2025�2026 return "permission denied".
-- **Speed.** Server-side 5-minute bars for ~500 stocks take **25�60 s per day**. The
-  extraction runs as 156 monthly SGE jobs, 4 at a time (`scripts/wrds_cloud/`): about 8�12
+  2024-12-31** only. 2003–2011 and 2025–2026 return "permission denied".
+- **Speed.** Server-side 5-minute bars for ~500 stocks take **25–60 s per day**. The
+  extraction runs as 156 monthly SGE jobs, 4 at a time (`scripts/wrds_cloud/`): about 8–12
   hours, submitted as job 40400561.
 - **Universe.** `crsp.dsp500list` gives point-in-time membership (505 names on 2019-03-01).
   `wrdsapps_link_crsp_taqm.taqmclink` misses about 15% of members, mostly
-  foreign-incorporated (ETN, LYB, SLB�). Those fall back to the CRSP ticker that day.
+  foreign-incorporated (ETN, LYB, SLB…). Those fall back to the CRSP ticker that day.
 - **Test day 2019-03-01.**
-  - 501 of 505 members got bars, 78 bars each (09:30�15:55).
+  - 501 of 505 members got bars, 78 bars each (09:30–15:55).
   - **The last 5-minute close is within 0.5% of the CRSP close for 501/501**, including the
     70 ticker-matched names.
 - **A bug caught by the test.** The Postgres `::int` cast rounds, which shifted trades into
   the next bar and created a phantom bar 78. Bucketing now uses `floor()`.
 
-## Data
+## Pre-registration (frozen 10 October 2026, before any model or baseline result)
 
-- **Source:** WRDS TAQ millisecond trades, aggregated on WRDS's side into 5-minute bars
-  (open, high, low, close, volume, trade count) for 09:30–16:00 New York.
-- **Universe:** S&P 500 members as of each date (point in time, from the CRSP or Compustat
-  constituents), so there is no survivorship bias. These names are liquid, and 46 of them are
-  FTMO stock CFDs.
-- **Years:** as far back as TAQ millisecond allows (2003 or later), ideally through 2025.
-- **Linking:** CRSP returns and corporate actions join through the CRSP–TAQ link table, for
-  adjustments and delisting.
-- **Gate D (data):** a clock check and a cross-check against CRSP before any modelling.
-  - 5-minute closes at 16:00 must match the CRSP daily close on ≥ 99% of stock-days.
-  - Volume sums must be within 5%.
-  - Bar timestamps must pass the session-open volatility check (the HistData lesson).
+Everything below is fixed. Changes after this commit are amendments: dated, justified and made
+before the result they could affect is seen.
 
-## Design (fixed before modelling; candidates to settle with the probe)
+### Data and universe
+- **Bars:** TAQ 5-minute bars (Gate D passed) for S&P 500 members on each day (`crsp.dsp500list`,
+  point in time), read through `orb_research/taq_bars.py`.
+- **Daily data:** official closes, opens, returns and the previous day's market cap from CRSP
+  daily.
+- **Bar timing:** bar b covers [09:30 + 5b, 09:35 + 5b) New York, and **its close is known at
+  09:35 + 5b**.
 
-- **Image:** the previous trading day plus today up to the decision time, in 5-minute
-  bars:
-  - OHLC bars, a volume panel and a VWAP line;
-  - the JKX conventions: 3 pixels per bar, scaling by the image's own high and low.
-- **Decision times:** 10:30, 12:00 and 14:00 New York, one model each, all reported. 12:00 is
-  the primary.
-- **Labels and returns:**
-  - the label is the sign of the return from the decision time to the 16:00 close;
-  - the portfolio return is the same interval, at the next bar's open, no earlier;
-  - the price at the decision time is the close of the bar ENDING then (the ML_PLAN
-    look-ahead lesson).
-- **Model:** the JKX CNN family, adapted to the wider image, with a five-seed ensemble and no
-  hyperparameter search beyond a nested validation split.
-- **Baselines (mandatory):**
-  - intraday momentum (first half hour predicting the rest);
-  - same-day reversal from the open;
-  - the S2 noise-area signal applied per stock;
-  - 1-week reversal;
-  - logistic regression on simple path features.
-- **Portfolios:** deciles on predicted probability at each decision time, equal and value
-  weight, held to the close.
-  - Report gross and net of a cost of 2 bps per side for S&P 500 names (a stated
-    assumption).
-  - Report turnover, and the top-100 by size as the "tradeable on FTMO" proxy.
+### Decision times and samples
+- **Decision times T:** 10:30, **12:00 (primary)** and 14:00 New York.
+- **Today's bars:** those ending at or before T. That is b = 0..11 (12 bars) at 10:30, 0..29
+  (30) at 12:00, and 0..53 (54) at 14:00.
+- **Eligibility.** A stock-day qualifies at T if:
+  - it is a member that day;
+  - it has a bar for at least 90% of the window's bars (yesterday's 78 plus today's up to T);
+  - it has a bar ending exactly at T;
+  - CRSP has today's close and yesterday's market cap.
 
-## Splits and vault
+### Image
+- **Window:** yesterday's 78 bars, then today's bars up to T, side by side with no gap column
+  (90, 108 and 132 bars).
+- **Drawing, as in JKX:**
+  - 3 pixels per bar: open tick, high-low bar, close tick;
+  - **height 64**: price area 52 pixels, volume area 12;
+  - price scaling uses the window's min and max of high, low, open, close and VWAP;
+  - missing bars stay blank.
+- **The VWAP line replaces the moving average.** It is the running volume-weighted price within
+  each day, restarting at each day's open, drawn through the centre columns.
+- **Volume bars** are scaled to the window's maximum.
 
-- **Development:** the first available year to 2016. Train on the earlier part, with purged
-  walk-forward validation inside.
-- **Test:** 2017–2021, evaluated once after development is frozen.
-- **Sealed, in vault.json:** 2022–2025, opened once after the test passes, by a committed
-  plan.
-- **2026:** a live paper forward test.
+### Label and returns
+- **Entry:** the open of the first bar after T (bar index n_T), the first trade after the
+  decision. **Exit:** the official CRSP close (a market-on-close order).
+- **Return:** r = CRSP close / entry − 1.
+- **Label:** y = 1 if r is above that day's cross-sectional median among eligible stocks at
+  that T, else 0.
 
-## Pass conditions (to be fixed before modelling)
+### Model
+- **Architecture:** the JKX 20-day CNN: 3 blocks of 5×3 conv, batch norm, leaky ReLU and 2×1
+  max-pool, with 64/128/256 filters. The first layer has vertical stride 3 and dilation 2.
+  Dropout is 50% before a 2-output linear layer.
+- **Training:** Adam with learning rate 1e-5, batch 128, Xavier initialisation, pixels
+  standardised with training statistics.
+- **Ensemble:** 5 seeds, probabilities averaged.
+- **One model per decision time, with no hyperparameter search.**
 
-- **Primary:** on the 12:00 model's test sample, the equal-weight H-L t (NW) must be at least
-  3.0 after costs, and the top-100 value-weight H-L Sharpe must be above 0.
-- The CNN must also beat the best baseline's H-L Sharpe by at least 0.3.
+### Splits
+- **Train:** 2012–2016.
+- **Validation (early stopping only):** 2017. Training stops after 2 epochs without a lower
+  validation loss, and the best epoch is kept.
+- **Test:** 2018–2020, evaluated **once**, after the models are frozen.
+- **Sealed:** 2021–2024 (`vault.json`: `intraday_b_sealed`). Opened once, only if the test
+  passes, by a committed amendment, with the same frozen models.
+
+### Portfolios and costs
+- **Construction:** each day at T, deciles on the score (decile 10 = most likely to beat the
+  median). H-L = decile 10 − decile 1, held to the close.
+- **Weights:** equal weight, and value weight by the previous day's market cap. The **top
+  100** version keeps the 100 largest by the previous day's market cap.
+- **Costs:** 2 bps per side per leg, so **H-L net = H-L gross − 8 bps per day** (both legs
+  bought and sold daily). Gross and net are both reported.
+- **Statistics:** Sharpe ratios annualised by √252; Newey–West t with 5 lags.
+
+### Baselines (same eligibility, same portfolios and costs; each score is known at T)
+1. **Intraday momentum:** the return from yesterday's CRSP close to the close of the bar
+   ending at T.
+2. **Same-day reversal:** −(the return from today's first bar open to the close of the bar
+   ending at T).
+3. **S2 per stock:** today's move from the open to T, divided by the stock's 14-day average
+   |move from the open to the same bar|.
+4. **1-week reversal:** −(the 5-day CRSP return to yesterday's close).
+5. **Intraday periodicity (Heston, Korajczyk & Sadka 2010):** the stock's mean return from the
+   same T to the close over the previous 5 days.
+6. **Logistic regression** on 1–5 plus the realised volatility so far today, trained on
+   2012–2016.
+
+### Gate B1: label and portfolio integrity (before any model is trained)
+On 2012–2017:
+1. **Entry prices:** the first bar's open is within 0.5% of the CRSP open on ≥ 99% of
+   stock-days.
+2. **Random score:** a random score gives an H-L gross t with |t| < 3.
+3. **Perfect foresight:** a perfect-foresight score gives perfectly monotone deciles.
+
+Failure stops the study until the code is fixed.
+
+### Pass condition (12:00 model, test 2018–2020); all three required
+1. Equal-weight H-L **net** NW t ≥ 3.0.
+2. Top-100 value-weight H-L **net** Sharpe > 0.
+3. The CNN's equal-weight H-L net Sharpe exceeds the best baseline's by ≥ 0.3.
+
+The 10:30 and 14:00 models are reported but not gated. A failure closes idea B with a full
+write-up, and no rescue search.
 
 ## Compute and budget
 
