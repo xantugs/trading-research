@@ -240,3 +240,64 @@ at 12:00, **+0.41** at 14:00 (t 0.37, 249 days).
 - **Benchmark for pass condition 3 at 12:00:** the best baseline by equal-weight net Sharpe is
   same-day reversal (−1.70). The logistic regression, judged on 2017 only, is not comparable
   over 2012–2017. The test-period comparison uses each baseline over 2018–2020.
+
+## 12:00 model: the test FAILS; idea B is closed (10 October 2026)
+
+**Training** (RTX 4090, `scripts/intraday_b_train.py`, commit 64b2af9; ledger row `intraday_b/T1200`).
+Five seeds on 2012–2016 (619,887 images), early-stopped on 2017 (124,679 images), images
+64 × 324, 1,114,370 parameters. The seeds stopped after 7, 4, 6, 9 and 8 epochs with best
+validation losses of 0.7038, 0.7157, 0.6987, 0.6958 and 0.6966 (chance is 0.6931) and
+validation accuracy 50.2–50.7%. Two seeds were retrained after the first launch of five
+processes ran out of GPU memory; the retrained seeds use the same seeds and data, and the
+training rule is deterministic given them.
+
+**Dev sanity check** (`outputs/intraday_b/cnn_dev_T1200.csv`; equal-weight H-L, gross bps a
+day / gross Sharpe / net Sharpe after 8 bps):
+
+| Years | 2012 | 2013 | 2014 | 2015 | 2016 | **2017 (validation)** |
+|---|---|---|---|---|---|---|
+| H-L | +33.0 / 28.7 / 21.8 | +27.9 / 27.5 / 19.6 | +25.4 / 22.9 / 15.7 | +30.6 / 24.8 / 18.3 | +32.8 / 20.6 / 15.5 | **+1.6 / 1.56 / −6.49** |
+
+The network memorises its training years (Sharpe 20–29 in-sample) and carries about 1.6
+bps a day into the validation year.
+
+**Test, 2018–2020, run once** (`scripts/intraday_b_eval cnn --key 1200 --part test`,
+`outputs/intraday_b/cnn_test_T1200.csv`, ledger row `intraday_b/test_T1200`, 750 days):
+
+| Score | EW gross bps / Sharpe (t) | EW net Sharpe (t) | VW gross bps / Sharpe (t) | VW net Sharpe | Top-100 VW gross bps / Sharpe (t) | Top-100 VW net Sharpe |
+|---|---|---|---|---|---|---|
+| **CNN** | **+1.78 / 1.00 (1.61)** | **−3.48 (−5.60)** | +2.91 / 1.38 (2.28) | −2.41 | +2.64 / 0.98 (1.67) | **−1.99** |
+| Intraday momentum | −2.30 / −0.60 (−0.92) | −2.67 | −2.66 / −0.69 | −2.76 | −1.63 / −0.43 | −2.54 |
+| Same-day reversal | +2.99 / 0.81 (1.17) | −1.35 | +4.70 / 1.21 (1.89) | −0.85 | +4.07 / 1.08 (1.72) | −1.04 |
+| S2 per stock | −3.50 / −1.17 (−1.68) | −3.84 | −4.12 / −1.29 | −3.81 | −3.89 / −1.14 | −3.49 |
+| 1-week reversal | +7.49 / 1.64 (2.81) | **−0.11** | +10.89 / 2.44 (3.78) | +0.65 | +11.34 / 2.73 (4.24) | +0.80 (t 1.25) |
+| Periodicity (HKS) | −3.05 / −0.95 (−1.65) | −3.43 | −3.38 / −1.01 | −3.38 | −2.09 / −0.60 | −2.88 |
+| Logistic regression | +0.76 / 0.22 (0.32) | −2.14 | +2.34 / 0.66 (0.98) | −1.60 | +2.02 / 0.54 (0.82) | −1.59 |
+
+CNN by year, equal weight, gross bps / Sharpe: 2018 +2.2 / 1.75; 2019 +1.3 / 1.06; 2020
++1.9 / 0.74. Positive in each year, never significant.
+
+**Pass condition.**
+1. Equal-weight H-L net NW t = **−5.60** (≥ 3.0 required): **FAIL**.
+2. Top-100 value-weight H-L net Sharpe = **−1.99** (> 0 required): **FAIL**.
+3. CNN equal-weight net Sharpe −3.48 against the best baseline, 1-week reversal, at −0.11
+   (margin ≥ 0.3 required): **FAIL**.
+
+**Reading.**
+- The CNN finds something: its gross H-L is positive in every test year and its
+  value-weight gross t is 2.28. But the spread is about 2 bps a day, a quarter of the 8 bps
+  round-trip cost, and its equal-weight gross t of 1.61 is not significant even before costs.
+- It does not beat the hand-made baselines. Same-day reversal (+3.0 bps) and 1-week reversal
+  (+7.5 bps) both carry larger gross spreads over 2018–2020. The 1-week reversal, flat on
+  2012–2017 (+0.8 bps), is the only score with a positive net Sharpe anywhere, in the
+  value-weight versions, and that is not significant (t 1.25).
+- The 2017 validation year had already shown the pattern: in-sample Sharpe above 20,
+  out-of-sample 1.6 bps a day. The frozen test confirms it rather than revising it.
+- Intraday momentum, S2 per stock and periodicity are all negative in 2018–2020, as they were
+  in 2012–2017: in S&P 500 single stocks, the move since the open reverses by the close.
+
+**Decision.** Idea B is closed. The 2021–2024 seal (`intraday_b_sealed`) stays shut: the
+plan opens it only after a pass. No rescue search follows: no other labels, horizons, costs,
+architectures or universes will be tried on this data under this idea. The 10:30 and 14:00
+models, already queued on the 4090, are trained and reported below because the plan says
+they are reported; they are not gated and cannot change the decision.
