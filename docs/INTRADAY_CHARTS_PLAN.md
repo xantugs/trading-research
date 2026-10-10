@@ -201,3 +201,42 @@ of daily volume over 2012–2020. This is a known market trend, not a data fault
   ran once and is recorded. Retired ranges stay in `vault.json` but no longer block reads.
 - **New loader.** `orb_research/taq_bars.py` loads bars through the vault. A bar's close
   is known at its END (09:35 + 5b).
+
+## Gate B1: PASSED after amendment 1 (10 October 2026)
+
+1. **Official open** inside the first bar, or within 0.5% of its open: 99.97–100% of
+   stock-days in every year, 2012–2017.
+2. **Random score:** H-L gross t = 0.53.
+3. **Perfect-foresight deciles:** −103, −49, −29, −15, −4, +8, +20, +34, +54, +113 bps a day,
+   monotone.
+
+**Samples (2012–2020):** about 122–126k per year and decision time, 8.5 GB of packed images.
+3–6 days a year are excluded by the frozen eligibility rules: the day after each 13:00 half
+day (yesterday's window has under 90% of its bars), and at 14:00 the half days themselves.
+
+## Baselines on the development years (2012–2017; `outputs/intraday_b/baselines_dev_2012_2017.csv`)
+
+**H-L, equal weight:** gross bps a day / gross Sharpe (t) / net Sharpe after 8 bps a day.
+
+| Score | 10:30 | 12:00 | 14:00 |
+|---|---|---|---|
+| Same-day reversal | +4.0 / 1.42 (3.4) / −1.42 | +4.2 / 1.91 (4.7) / −1.70 | +4.6 / 2.93 (6.9) / −2.20 |
+| Periodicity (HKS) | −0.2 / −0.09 / −2.92 | +1.9 / 1.03 (2.7) / −3.25 | +4.1 / 3.12 (7.8) / −3.01 |
+| 1-week reversal | +0.8 / 0.27 / −2.35 | +0.1 / 0.06 / −3.42 | −0.5 / −0.31 / −5.36 |
+| Intraday momentum | −5.0 / −1.58 / −4.10 | −4.8 / −2.02 / −5.41 | −5.0 / −3.16 / −8.18 |
+| S2 per stock | −3.5 / −1.53 / −5.05 | −3.7 / −2.00 / −6.30 | −4.3 / −3.33 / −9.55 |
+| Logistic regression (2017 only) | +5.4 / 2.19 / −1.09 | +1.9 / 0.92 / −2.95 | +6.3 / 4.92 / −1.36 |
+
+**The logistic regression, value-weighted top 100, 2017:** net Sharpe −2.08 at 10:30, −1.92
+at 12:00, **+0.41** at 14:00 (t 0.37, 249 days).
+
+**Reading.**
+- **Reversal, not momentum.** In single stocks, moves since the open (and since yesterday's
+  close) *reverse* by the close. Momentum and S2 are negative. That is the opposite of the
+  index-level momentum S2 trades.
+- **Periodicity strengthens late in the day,** as published.
+- **Costs dominate.** No single baseline beats the 8 bps-a-day cost. The best gross spread is
+  about 4–6 bps.
+- **Benchmark for pass condition 3 at 12:00:** the best baseline by equal-weight net Sharpe is
+  same-day reversal (−1.70). The logistic regression, judged on 2017 only, is not comparable
+  over 2012–2017. The test-period comparison uses each baseline over 2018–2020.

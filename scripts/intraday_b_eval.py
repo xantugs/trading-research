@@ -22,6 +22,20 @@ from orb_research.taq_bars import load_bars
 DATA = Path("C:/data/intraday_b")
 COST = 0.0008
 BASELINES = ("mom", "rev", "s2", "wrev", "hks")
+LR_FEATURES = ("mom", "rev", "s2", "wrev", "hks", "rv")
+
+
+def add_logit(meta: pd.DataFrame) -> pd.DataFrame:
+    """Baseline 6: logistic regression of the label on the five baseline scores plus realised
+    volatility so far, fitted on 2012-2016 only (standardised on 2012-2016, NaN -> 0)."""
+    from sklearn.linear_model import LogisticRegression
+
+    x = meta[list(LR_FEATURES)]
+    fit_rows = (meta["date"].dt.year <= 2016) & (meta["label"] >= 0)
+    mu, sd = x[fit_rows].mean(), x[fit_rows].std().replace(0, 1)
+    z = ((x - mu) / sd).clip(-10, 10).fillna(0.0).to_numpy()
+    model = LogisticRegression(max_iter=1000).fit(z[fit_rows.to_numpy()], meta.loc[fit_rows, "label"])
+    return meta.assign(logit=model.predict_proba(z)[:, 1])
 
 
 def load_meta(key: str, years) -> pd.DataFrame:
@@ -91,9 +105,11 @@ def gate_b1() -> None:
 def baselines() -> None:
     rows = []
     for key in ("1030", "1200", "1400"):
-        meta = load_meta(key, range(2012, 2018))
+        meta = add_logit(load_meta(key, range(2012, 2018)))
         for s in BASELINES:
             rows += [dict(r, T=key) for r in report(meta, s, s)]
+        # the logistic regression is fitted on 2012-2016, so its fair dev check is 2017 only
+        rows += [dict(r, T=key) for r in report(meta[meta["date"].dt.year == 2017], "logit", "logit (2017 only)")]
     out = pd.DataFrame(rows)[["T", "score", "weights", "days", "gross_bps", "gross_sharpe", "gross_t", "net_sharpe", "net_t"]]
     Path("outputs/intraday_b").mkdir(parents=True, exist_ok=True)
     out.to_csv("outputs/intraday_b/baselines_dev_2012_2017.csv", index=False)
