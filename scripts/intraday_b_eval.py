@@ -2,6 +2,8 @@
 
     .venv/Scripts/python -m scripts.intraday_b_eval gate-b1          # integrity, 2012-2017
     .venv/Scripts/python -m scripts.intraday_b_eval baselines        # baselines on 2012-2017 only
+    .venv/Scripts/python -m scripts.intraday_b_eval cnn --key 1200 --part dev    # CNN on 2012-2017 (in-sample)
+    .venv/Scripts/python -m scripts.intraday_b_eval cnn --key 1200 --part test   # 2018-2020, runs ONCE per key
 
 Portfolios: each day, deciles on the score; H-L = decile 10 - decile 1, held from the first trade
 after T to the CRSP close. Net = gross - 8 bps a day (2 bps per side per leg). Sharpe by sqrt(252);
@@ -18,6 +20,7 @@ import pandas as pd
 from orb_research import crsp
 from orb_research.jkx_portfolio import decile_returns
 from orb_research.taq_bars import load_bars
+from orb_research.vault import n_runs, record_run
 
 DATA = Path("C:/data/intraday_b")
 COST = 0.0008
@@ -117,11 +120,66 @@ def baselines() -> None:
     print(out.round(2).to_string(index=False))
 
 
+def cnn(key: str, part: str) -> None:
+    """The frozen ensemble's predictions (scripts.intraday_b_train --stage predict) through the same
+    portfolios as the baselines. `dev` (2012-2017) is in-sample for 2012-2016 and the early-stopping
+    year for 2017, so it is a sanity check only. `test` (2018-2020) is the pre-registered evaluation:
+    it runs once per decision time (the ledger refuses a second run) and prints the pass condition."""
+    experiment = f"intraday_b/{part}_T{key}"
+    if part == "test" and n_runs(experiment) > 0:
+        raise SystemExit(f"{experiment} has already been evaluated (outputs/ledger.jsonl); the plan allows one run")
+    pred = pd.read_parquet(DATA / "predictions" / f"T{key}_{part}.parquet")
+    years = sorted(pred["date"].dt.year.unique())
+    rows = [dict(r, years="all") for r in report(pred, "prob", "cnn")]
+    for y in years:
+        rows += [dict(r, years=str(y)) for r in report(pred[pred["date"].dt.year == y], "prob", "cnn")]
+    best = None
+    if part == "test":
+        # baselines over the same test days; the logistic regression keeps its 2012-2016 fit
+        meta = add_logit(pd.concat([load_meta(key, range(2012, 2018)), pred.drop(columns=[c for c in pred if c.startswith("prob")])],
+                                   ignore_index=True))
+        meta = meta[meta["date"].dt.year >= years[0]]
+        for s in (*BASELINES, "logit"):
+            rows += [dict(r, years="all") for r in report(meta, s, s)]
+    out = pd.DataFrame(rows)[["years", "score", "weights", "days", "gross_bps", "gross_sharpe", "gross_t", "net_sharpe", "net_t"]]
+    Path("outputs/intraday_b").mkdir(parents=True, exist_ok=True)
+    out.to_csv(f"outputs/intraday_b/cnn_{part}_T{key}.csv", index=False)
+    pd.set_option("display.width", 200)
+    print(out.round(2).to_string(index=False))
+    metrics = {"ew_net_t": None, "vw_top100_net_sharpe": None}
+    if part == "test":
+        all_ = out[out["years"] == "all"].set_index(["score", "weights"])
+        ew_t = all_.loc[("cnn", "ew"), "net_t"]
+        vw_s = all_.loc[("cnn", "vw_top100"), "net_sharpe"]
+        ew_s = all_.loc[("cnn", "ew"), "net_sharpe"]
+        base = all_.xs("ew", level="weights")["net_sharpe"].drop("cnn")
+        best = base.idxmax()
+        c1, c2, c3 = ew_t >= 3.0, vw_s > 0, ew_s - base[best] >= 0.3
+        print(f"\n1. equal-weight H-L net NW t = {ew_t:.2f} (>= 3.0) -> {'pass' if c1 else 'FAIL'}")
+        print(f"2. top-100 value-weight H-L net Sharpe = {vw_s:.2f} (> 0) -> {'pass' if c2 else 'FAIL'}")
+        print(f"3. CNN equal-weight net Sharpe {ew_s:.2f} vs best baseline {best} {base[best]:.2f} "
+              f"(margin >= 0.3) -> {'pass' if c3 else 'FAIL'}")
+        verdict = "PASS" if c1 and c2 and c3 else "FAIL"
+        print(f"\nT{key} test 2018-2020: {verdict}" + ("" if key == "1200" else " (reported, not gated)"))
+        metrics = {"ew_net_t": float(ew_t), "vw_top100_net_sharpe": float(vw_s), "ew_net_sharpe": float(ew_s),
+                   "best_baseline": best, "best_baseline_ew_net_sharpe": float(base[best]), "verdict": verdict}
+    record_run(experiment, {"key": key, "part": part, "years": [int(y) for y in years]}, metrics)
+
+
 def main() -> None:
     p = argparse.ArgumentParser()
-    p.add_argument("what", choices=("gate-b1", "baselines"))
+    p.add_argument("what", choices=("gate-b1", "baselines", "cnn"))
+    p.add_argument("--key", choices=("1030", "1200", "1400"))
+    p.add_argument("--part", choices=("dev", "test"))
     a = p.parse_args()
-    gate_b1() if a.what == "gate-b1" else baselines()
+    if a.what == "cnn":
+        if not (a.key and a.part):
+            p.error("cnn needs --key and --part")
+        cnn(a.key, a.part)
+    elif a.what == "gate-b1":
+        gate_b1()
+    else:
+        baselines()
 
 
 if __name__ == "__main__":

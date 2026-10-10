@@ -77,3 +77,55 @@ def test_labels_split_each_day_at_the_median() -> None:
     meta, packed = _samples(bars, daily, DECISIONS["1030"], day)
     assert abs(meta["label"].mean() - 0.5) < 0.02
     assert packed.shape[1] == 64 * 3 * (78 + 12) // 8
+
+
+def _synthetic_meta(rng, year, n_days=30, n_stocks=60):
+    dates = pd.bdate_range(f"{year}-01-02", periods=n_days)
+    rows = []
+    for d in dates:
+        ret = rng.normal(0, 0.01, n_stocks)
+        label = (ret > np.median(ret)).astype(np.int8)
+        rows.append(pd.DataFrame({"date": d, "permno": 10_000 + np.arange(n_stocks), "mcap": rng.uniform(1e9, 1e11, n_stocks),
+                                  "ret": ret, "label": label, "mom": rng.normal(size=n_stocks), "rev": -ret + rng.normal(size=n_stocks),
+                                  "s2": rng.normal(size=n_stocks), "wrev": rng.normal(size=n_stocks), "hks": rng.normal(size=n_stocks),
+                                  "rv": rng.uniform(size=n_stocks).astype(np.float32)}))
+    return pd.concat(rows, ignore_index=True)
+
+
+def test_cnn_evaluation_reports_the_pass_condition_and_runs_the_test_once(tmp_path, monkeypatch, capsys) -> None:
+    from scripts import intraday_b_eval as ev
+
+    rng = np.random.default_rng(0)
+    (tmp_path / "T1200").mkdir()
+    (tmp_path / "predictions").mkdir()
+    dev, test = [], []
+    for y in range(2012, 2021):
+        m = _synthetic_meta(rng, y)
+        m.to_parquet(tmp_path / "T1200" / f"{y}_meta.parquet", index=False)
+        (dev if y < 2018 else test).append(m)
+    for part, frames in (("dev", dev), ("test", test)):
+        m = pd.concat(frames, ignore_index=True)
+        m = m.assign(prob=m["ret"] + rng.normal(0, 0.01, len(m)))       # a score with some foresight
+        m.to_parquet(tmp_path / "predictions" / f"T1200_{part}.parquet", index=False)
+    ledger = []
+    monkeypatch.setattr(ev, "DATA", tmp_path)
+    monkeypatch.setattr(ev, "record_run", lambda exp, cfg, met: ledger.append((exp, met)))
+    monkeypatch.setattr(ev, "n_runs", lambda prefix: sum(e.startswith(prefix) for e, _ in ledger))
+    monkeypatch.chdir(tmp_path)
+
+    ev.cnn("1200", "dev")
+    out = capsys.readouterr().out
+    assert "cnn" in out and ledger[-1][0] == "intraday_b/dev_T1200"
+    assert (tmp_path / "outputs" / "intraday_b" / "cnn_dev_T1200.csv").exists()
+
+    ev.cnn("1200", "test")
+    out = capsys.readouterr().out
+    assert "T1200 test 2018-2020:" in out and "best baseline" in out
+    table = pd.read_csv(tmp_path / "outputs" / "intraday_b" / "cnn_test_T1200.csv")
+    assert set(table["score"]) == {"cnn", "mom", "rev", "s2", "wrev", "hks", "logit"}
+    assert ledger[-1][1]["verdict"] in ("PASS", "FAIL")
+    assert ledger[-1][1]["ew_net_t"] > 3          # foresight score must pass check 1 on synthetic data
+
+    import pytest
+    with pytest.raises(SystemExit, match="already been evaluated"):
+        ev.cnn("1200", "test")
