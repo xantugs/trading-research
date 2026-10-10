@@ -30,7 +30,9 @@ PAPER_FC_INPUTS = {5: 15_360, 20: 46_080, 60: 184_320}
 
 
 class ChartCNN(nn.Module):
-    def __init__(self, days: int):
+    def __init__(self, days: int, shape: tuple[int, int] | None = None):
+        """`days` picks the JKX architecture (5/20/60); `shape` overrides the input image size
+        (intraday charts use the 20-day architecture on wider images)."""
         super().__init__()
         self.days = days
         layers, channels = [], 1
@@ -42,7 +44,7 @@ class ChartCNN(nn.Module):
             channels = out
         self.features = nn.Sequential(*layers)
         with torch.no_grad():
-            self.fc_inputs = int(self.features(torch.zeros(1, 1, *image_shape(days))).numel())
+            self.fc_inputs = int(self.features(torch.zeros(1, 1, *(shape or image_shape(days)))).numel())
         self.head = nn.Sequential(nn.Flatten(), nn.Dropout(0.5), nn.Linear(self.fc_inputs, 2))
         for m in self.modules():
             if isinstance(m, (nn.Conv2d, nn.Linear)):
@@ -60,10 +62,11 @@ def n_params(model: nn.Module) -> int:
 _SHIFTS = torch.arange(7, -1, -1, dtype=torch.uint8)
 
 
-def unpack_batch(packed: torch.Tensor, days: int, mean: float, std: float) -> torch.Tensor:
+def unpack_batch(packed: torch.Tensor, days: int, mean: float, std: float,
+                 shape: tuple[int, int] | None = None) -> torch.Tensor:
     """Packed uint8 rows (np.packbits order) -> standardised float images (B, 1, H, W) on the
     same device. Unpacking per batch keeps millions of images in memory at 1 bit per pixel."""
-    h, w = image_shape(days)
+    h, w = shape or image_shape(days)
     bits = (packed.unsqueeze(-1) >> _SHIFTS.to(packed.device)) & 1
     pixels = bits.reshape(len(packed), -1)[:, : h * w].to(torch.float32) * 255.0
     return ((pixels - mean) / std).reshape(-1, 1, h, w)
@@ -83,7 +86,8 @@ def _batches(n: int, size: int, rng: np.random.Generator | None):
 
 def train_one(packed: np.ndarray, labels: np.ndarray, days: int, seed: int, device: str = "cpu",
               lr: float = 1e-5, batch: int = 128, max_epochs: int = 100, patience: int = 2,
-              valid_frac: float = 0.3, data_on_gpu: bool = True, log=print) -> dict:
+              valid_frac: float = 0.3, data_on_gpu: bool = True, log=print,
+              shape: tuple[int, int] | None = None, valid_idx: np.ndarray | None = None) -> dict:
     """Train one model. Returns {"state", "mean", "std", "epochs", "best_valid_loss", "history"}.
 
     `data_on_gpu=False` keeps the packed images in system memory and moves one batch at a time,
@@ -91,9 +95,13 @@ def train_one(packed: np.ndarray, labels: np.ndarray, days: int, seed: int, devi
     torch.manual_seed(seed)
     rng = np.random.default_rng(seed)
     n = len(labels)
-    order = rng.permutation(n)
-    cut = int(round(n * (1 - valid_frac)))
-    tr, va = order[:cut], order[cut:]
+    if valid_idx is None:               # JKX: a random 70/30 split
+        order = rng.permutation(n)
+        cut = int(round(n * (1 - valid_frac)))
+        tr, va = order[:cut], order[cut:]
+    else:                               # a fixed (e.g. later-year) validation set
+        va = np.asarray(valid_idx)
+        tr = np.setdiff1d(np.arange(n), va)
     mean, std = pixel_stats(packed[tr])
     store = device if data_on_gpu else "cpu"
     x = torch.from_numpy(packed).to(store)
@@ -103,7 +111,7 @@ def train_one(packed: np.ndarray, labels: np.ndarray, days: int, seed: int, devi
     def batch_of(rows: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         return x[rows].to(device, non_blocking=True), y[rows].to(device, non_blocking=True)
 
-    model = ChartCNN(days).to(device)
+    model = ChartCNN(days, shape).to(device)
     opt = torch.optim.Adam(model.parameters(), lr=lr)
     loss_fn = nn.CrossEntropyLoss()
     best, best_state, bad, history = np.inf, None, 0, []
@@ -114,7 +122,7 @@ def train_one(packed: np.ndarray, labels: np.ndarray, days: int, seed: int, devi
         for idx in _batches(len(tr), batch, rng):
             xb, yb = batch_of(tr_t[torch.from_numpy(idx).to(store)])
             opt.zero_grad(set_to_none=True)
-            loss = loss_fn(model(unpack_batch(xb, days, mean, std)), yb)
+            loss = loss_fn(model(unpack_batch(xb, days, mean, std, shape)), yb)
             loss.backward()
             opt.step()
             total += loss.item() * len(yb)
@@ -123,7 +131,7 @@ def train_one(packed: np.ndarray, labels: np.ndarray, days: int, seed: int, devi
         with torch.no_grad():
             for idx in _batches(len(va), 1024, None):   # memory only: the mean loss is the same
                 xb, yb = batch_of(va_t[torch.from_numpy(idx).to(store)])
-                logits = model(unpack_batch(xb, days, mean, std))
+                logits = model(unpack_batch(xb, days, mean, std, shape))
                 vloss += loss_fn(logits, yb).item() * len(yb)
                 correct += (logits.argmax(1) == yb).sum().item()
         vloss /= len(va)
@@ -138,18 +146,19 @@ def train_one(packed: np.ndarray, labels: np.ndarray, days: int, seed: int, devi
             bad += 1
             if bad >= patience:
                 break
-    return {"state": best_state, "mean": mean, "std": std, "epochs": len(history),
+    return {"state": best_state, "mean": mean, "std": std, "shape": shape, "epochs": len(history),
             "best_valid_loss": best, "history": history}
 
 
 def predict(fitted: dict, packed: np.ndarray, days: int, device: str = "cpu", batch: int = 4096) -> np.ndarray:
     """Probability of an up move for each packed image."""
-    model = ChartCNN(days).to(device)
+    shape = fitted.get("shape")
+    model = ChartCNN(days, shape).to(device)
     model.load_state_dict(fitted["state"])
     model.eval()
     out = []
     with torch.no_grad():
         for i in range(0, len(packed), batch):
             x = torch.from_numpy(packed[i:i + batch]).to(device)
-            out.append(torch.softmax(model(unpack_batch(x, days, fitted["mean"], fitted["std"])), 1)[:, 1].cpu())
+            out.append(torch.softmax(model(unpack_batch(x, days, fitted["mean"], fitted["std"], shape)), 1)[:, 1].cpu())
     return torch.cat(out).numpy() if out else np.zeros(0)

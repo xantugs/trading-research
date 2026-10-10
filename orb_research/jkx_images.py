@@ -37,7 +37,7 @@ def _rows(values: np.ndarray, lo: np.ndarray, span: np.ndarray, price_h: int) ->
 
 
 def draw(open_: np.ndarray, high: np.ndarray, low: np.ndarray, close: np.ndarray, ma: np.ndarray,
-         volume: np.ndarray, volume_bars: bool = True) -> tuple[np.ndarray, np.ndarray]:
+         volume: np.ndarray, volume_bars: bool = True, height: int | None = None) -> tuple[np.ndarray, np.ndarray]:
     """Draw a batch of images. Every input is (images, days); NaN marks a missing value.
 
     A day without both high and low is left black (the bar cannot be drawn, paper fn. 5); with
@@ -47,7 +47,10 @@ def draw(open_: np.ndarray, high: np.ndarray, low: np.ndarray, close: np.ndarray
     Returns (pixels uint8 [images, height, width] of 0/255, valid bool [images]). An image is
     invalid when nothing can be drawn or all its prices are equal."""
     b, n = close.shape
-    height, width = image_shape(n)
+    if height is None:
+        height, width = image_shape(n)
+    else:                               # other window lengths (intraday charts): 3 pixels per bar
+        width = 3 * n
     vol_h = height // 5 if volume_bars else 0
     price_h = height - vol_h
     out = np.zeros((b, height, width), np.uint8)

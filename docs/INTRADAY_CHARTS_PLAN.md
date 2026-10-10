@@ -137,6 +137,35 @@ Failure stops the study until the code is fixed.
 The 10:30 and 14:00 models are reported but not gated. A failure closes idea B with a full
 write-up, and no rescue search.
 
+### Amendment 1 (10 October 2026, before any baseline or model result)
+
+Gate B1's first run passed checks 2 and 3 but **failed check 1**. The day's first-bar open was
+within 0.5% of the CRSP open on 97.61–99.24% of stock-days a year (≥ 99% required).
+
+**Diagnosis.** The check compared the CRSP open, which is the listing exchange's opening-auction
+price, with the *first trade* of the day. On volatile mornings, other venues print trades
+seconds before the auction. Mismatches cluster on such days, for example 24 August 2015 (157
+stocks). The official open lies inside the first bar's high–low range (±0.1%), or within 0.5%
+of its open, on:
+
+| Year | 2012 | 2013 | 2014 | 2015 | 2016 | 2017 |
+|---|---|---|---|---|---|---|
+| Share of stock-days | 100.00% | 99.99% | 99.99% | 99.97% | 99.99% | 100.00% |
+| Stock-days outside both (mostly single odd prints) | 4 | 12 | 14 | 32 | 12 | 2 |
+
+The closes of those outlier stock-days still match CRSP (Gate D). The bar data is sound;
+the check measured the wrong price.
+
+**Changes, approved by the project owner:**
+1. **Check 1 now reads:** the CRSP open lies inside the first bar's high–low range (±0.1%), or
+   within 0.5% of its open, on ≥ 99% of stock-days, 2012–2017.
+2. **"Today's open" in baselines 2 (same-day reversal) and 3 (S2 per stock)** is the official
+   CRSP open, not the first trade. It is known by 09:30, so there is no look-ahead, and it is
+   immune to pre-auction prints.
+
+Images (which draw the actual trades), labels (which enter at the first trade after T),
+models, splits and the pass condition are unchanged.
+
 ## Compute and budget
 
 - **WRDS side:** about 4,000 trading days × 500 symbols. Feasibility depends on the
