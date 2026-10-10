@@ -321,3 +321,52 @@ momentum −0.9 / −0.18 / −1.83; same-day reversal +1.5 / 0.36 / −1.56; S2
 Against the (ungated) pass condition: net t −6.01, top-100 net Sharpe −2.24, and the CNN
 trails the 1-week reversal by 3.2 Sharpe units. The 10:30 model is weaker than the 12:00
 one in every column, which fits a one-hour-old chart carrying less of the day's information.
+
+## 14:00 model: reported, not gated (10 October 2026)
+
+Same recipe (images 64 × 396, 1,224,962 parameters; ledger row `intraday_b/T1400`). Seeds
+stopped after 6, 4, 9, 10 and 4 epochs; best validation losses 0.7015, 0.7057, 0.6954, 0.6954
+and 0.7324. The predict stage first ran out of GPU memory at 4,096 images a pass (10 GB of
+activations at this width) and was rerun at 1,024 a pass with the new `--predict-batch`
+option; the model is in eval mode, so the batch size does not change the output. Dev check:
+in-sample equal-weight H-L Sharpe 17.7 over 2012–2016; **2017 validation +4.9 bps a day,
+Sharpe 5.2 (t 5.0), net −3.22**.
+
+**Test, 2018–2020, run once** (`outputs/intraday_b/cnn_test_T1400.csv`, ledger row
+`intraday_b/test_T1400`, 751 days). CNN equal-weight H-L gross **+1.98 bps a day, Sharpe
+1.25 (t 1.81)**, net Sharpe −3.78 (t −5.50); value weight +3.04 / 1.63 (t 2.50); top-100
+value weight **+3.79 / 1.72 (t 2.70)**, net −1.91 (t −3.00). By year, equal weight gross:
+2018 +2.5 bps (Sharpe 2.1), 2019 +3.0 (3.1), 2020 +0.5 (0.2). Baselines at 14:00 over
+2018–2020, equal-weight gross bps / Sharpe / net Sharpe: intraday momentum −1.2 / −0.35 /
+−2.69; same-day reversal +1.5 / 0.47 / −2.00; S2 per stock −2.2 / −0.74 / −3.49; 1-week
+reversal **+4.3 / 1.32 / −1.16** (top-100 value weight +7.5 / 2.59 / −0.16); periodicity +2.2
+/ 1.18 / −3.06; logistic regression +1.6 / 0.58 / −2.41.
+
+Against the (ungated) pass condition: net t −5.50, top-100 net Sharpe −1.91, and the CNN
+trails the 1-week reversal by 2.6 Sharpe units. This is the strongest of the three CNNs: the
+only one whose value-weight gross t clears 2 in the test, and whose validation year was
+clearly positive. It is still a 2–4 bps spread against an 8 bps cost, and in 2020 it is flat.
+
+## Summary across decision times (10 October 2026)
+
+| Decision time | 2017 validation, EW gross bps / Sharpe | Test 2018–2020, EW gross bps / Sharpe (t) | Test EW net t | Test top-100 VW gross Sharpe (t) / net Sharpe | Best baseline EW net Sharpe |
+|---|---|---|---|---|---|
+| 10:30 | +0.2 / 0.13 | +1.6 / 0.79 (1.55) | −6.01 | 0.19 (0.33) / −2.24 | 1-week reversal +0.12 |
+| **12:00 (gated)** | +1.6 / 1.56 | +1.8 / 1.00 (1.61) | **−5.60** | 0.98 (1.67) / **−1.99** | 1-week reversal −0.11 |
+| 14:00 | +4.9 / 5.19 | +2.0 / 1.25 (1.81) | −5.50 | 1.72 (2.70) / −1.91 | 1-week reversal −1.16 |
+
+**What the study established.**
+- A JKX-style CNN on 5-minute charts of S&P 500 stocks carries a small, positive, mostly
+  insignificant gross spread into 2018–2020 at every decision time, growing from about 1.6
+  bps a day at 10:30 to 2–4 bps at 14:00 as more of the day is visible. This is the same
+  direction as the hand-made reversal baselines, and smaller than the 1-week reversal.
+- Nothing survives 2 bps a side on both legs. The 8 bps daily round trip is 2–5 times the
+  gross spread of every score, hand-made or learned.
+- The in-sample fit is enormous (Sharpe 15–29 on the training years) and the validation
+  year predicts the test well, so the early-stopping protocol worked as intended; the
+  failure is the signal's size, not a bug in the protocol.
+- GPU cost of the three models: about 6.5 hours on the RTX 4090 (¥2.78 an hour), about ¥18.
+
+**Status: idea B closed; the 2021–2024 seal stays shut.** Possible successors would need a
+different question (longer holding periods or lower turnover to beat costs, or a cost model
+for a real execution venue) and would be new pre-registrations, not amendments to this one.

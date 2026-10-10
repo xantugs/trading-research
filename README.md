@@ -11,7 +11,7 @@ successes. Formerly `orb-backtest`; the repository grew beyond opening-range bre
 | ML on index intraday features (XGBoost + autoencoder MLP) | No edge after bug fixes | `docs/ML_PLAN.md` |
 | JKX chart-image CNN replication (CRSP, 1993–2025) | Replicated; passed the sealed 2020–2025 test | `docs/JKX_REPLICATION_PLAN.md` |
 | Pilot A: stock-trained CNN on FTMO instruments | Failed (no transfer) | `docs/JKX_TRANSFER_PILOT.md` |
-| Idea B: intraday chart CNNs (TAQ, S&P 500) | Failed its 2018–2020 test (12:00 model: 2 bps a day gross, −5.6 net t) | `docs/INTRADAY_CHARTS_PLAN.md` |
+| Idea B: intraday chart CNNs (TAQ, S&P 500) | Failed its 2018–2020 test: 2–4 bps a day gross at every decision time, net t −5.5 to −6.0 after 8 bps costs | `docs/INTRADAY_CHARTS_PLAN.md` |
 
 There is **no claimed profitable strategy** in this repository.
 
