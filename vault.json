@@ -4,8 +4,20 @@
       "name": "jkx_post_publication",
       "start": "2020-01-01",
       "end": "2099-12-31",
-      "datasets": ["crsp_daily"],
-      "note": "After the JKX test sample (2001-2019). Opened once, by the plan in docs/JKX_REPLICATION_PLAN.md, after the replication passes."
+      "datasets": [
+        "crsp_daily"
+      ],
+      "note": "After the JKX test sample (2001-2019). Opened once, by the plan in docs/JKX_REPLICATION_PLAN.md, after the replication passes. RETIRED 2026-10-09: Gate 3 ran once (experiment jkx_gate3, PASSED); the range is no longer out-of-sample.",
+      "retired": "2026-10-09"
+    },
+    {
+      "name": "intraday_b_sealed",
+      "start": "2021-01-01",
+      "end": "2024-12-31",
+      "datasets": [
+        "taq_bars5m"
+      ],
+      "note": "Idea B (docs/INTRADAY_CHARTS_PLAN.md): opened once, after the 2018-2020 test passes, by a committed plan."
     }
   ]
 }

@@ -103,3 +103,31 @@ A CNN may find shapes that the hand-made rules miss.
 - **Images:** about 500 × 252 × 20 years × 3 decision times ≈ 7.5 million.
 - **GPU:** CNN training on a rented RTX 4090/5090, estimated at ¥20–40. That fits inside the
   remaining ~¥100 of the ¥120 cap.
+
+## Gate D: PASSED (10 October 2026), open years 2012–2020
+
+Data: 156 monthly files (3.1 GB, 128 M bars). SHA-256 verified after download.
+`scripts/taq_gate_d.py`, results in `outputs/taq_b/gate_d.csv`. 2021–2024 are sealed in
+`vault.json` (`intraday_b_sealed`) and were not read.
+
+| Check | Result |
+|---|---|
+| Stock-days matched to CRSP | 100% every year (≈125k a year) |
+| Last bar's close within 0.5% of the CRSP close | **99.72–99.93%** a year (≥ 99% required); median gap 1.1–2.2 bps |
+| Within 0.1% | 93.6–98.6% |
+| Full 78-bar days | 97.5–99.4% |
+| Clock: the open bar has the largest mean \|5-minute return\| | rank 1 in every year |
+| Bar volume / CRSP daily volume, median | 0.94 (2012) falling to 0.85 (2019–20) |
+
+**Why the CRSP close differs slightly.** The CRSP close is the 16:00 closing-auction price.
+Our last bar ends at 16:00 and excludes the auction, by design: the auction price is not
+known before 16:00.
+
+**Why the volume share falls.** The excluded closing auction grew from about 5% to over 10%
+of daily volume over 2012–2020. This is a known market trend, not a data fault.
+
+**Other changes the same day.**
+- **The JKX seal is retired.** `jkx_post_publication` (CRSP 2020+) is marked retired: Gate 3
+  ran once and is recorded. Retired ranges stay in `vault.json` but no longer block reads.
+- **New loader.** `orb_research/taq_bars.py` loads bars through the vault. A bar's close
+  is known at its END (09:35 + 5b).

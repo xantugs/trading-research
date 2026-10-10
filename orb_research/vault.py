@@ -49,8 +49,10 @@ def _append(path: Path, row: dict) -> None:
 
 
 def sealed_ranges(dataset: str, vault_file: Path = VAULT_FILE) -> list[dict]:
+    """Active seals for a dataset. A range marked "retired" (its one-time test has been run and
+    recorded) is kept in vault.json for the record but no longer blocks reads."""
     spec = json.loads(vault_file.read_text(encoding="utf-8"))
-    return [r for r in spec["ranges"] if dataset in r["datasets"]]
+    return [r for r in spec["ranges"] if dataset in r["datasets"] and not r.get("retired")]
 
 
 def is_unsealed(experiment: str | None, range_name: str, log: Path = VAULT_LOG) -> bool:
