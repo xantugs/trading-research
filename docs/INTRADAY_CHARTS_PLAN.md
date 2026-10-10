@@ -301,3 +301,23 @@ plan opens it only after a pass. No rescue search follows: no other labels, hori
 architectures or universes will be tried on this data under this idea. The 10:30 and 14:00
 models, already queued on the 4090, are trained and reported below because the plan says
 they are reported; they are not gated and cannot change the decision.
+
+## 10:30 model: reported, not gated (10 October 2026)
+
+Same recipe (images 64 × 270, 1,031,426 parameters; ledger row `intraday_b/T1030`). Seeds
+stopped after 3, 3, 4, 6 and 6 epochs; best validation losses 0.7175, 0.7134, 0.7116, 0.6970
+and 0.7022. Dev check: in-sample equal-weight H-L Sharpe 15.5 over 2012–2016; **2017
+validation +0.15 bps a day, Sharpe 0.13**.
+
+**Test, 2018–2020, run once** (`outputs/intraday_b/cnn_test_T1030.csv`, ledger row
+`intraday_b/test_T1030`, 750 days). CNN equal-weight H-L gross **+1.64 bps a day, Sharpe
+0.79 (t 1.55)**, net Sharpe −3.08 (t −6.01); value weight +0.81 / 0.32; top-100 value weight
++0.62 / 0.19, net −2.24. By year, equal weight gross: 2018 +2.0, 2019 +0.2, 2020 +2.7 bps.
+Baselines at 10:30 over 2018–2020, equal-weight gross bps / Sharpe / net Sharpe: intraday
+momentum −0.9 / −0.18 / −1.83; same-day reversal +1.5 / 0.36 / −1.56; S2 per stock −1.6 /
+−0.44 / −2.58; 1-week reversal **+8.7 / 1.57 / +0.12** (top-100 value weight +14.3 / 2.56 /
++1.13, t 1.82); periodicity −4.9 / −1.15 / −3.03; logistic regression −1.1 / −0.26 / −2.15.
+
+Against the (ungated) pass condition: net t −6.01, top-100 net Sharpe −2.24, and the CNN
+trails the 1-week reversal by 3.2 Sharpe units. The 10:30 model is weaker than the 12:00
+one in every column, which fits a one-hour-old chart carrying less of the day's information.
